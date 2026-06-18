@@ -23,6 +23,9 @@
           <span class="live-dot" aria-hidden="true"></span>{{ loadingData ? 'Loading' : (connected ? 'Live' : 'Paused') }}
         </span>
         <span class="stat-badge stat-window"><span class="stat-label">Window</span>{{ selectedFeedLabel }}</span>
+        <span v-if="selectedSources.includes('jma')" class="stat-badge stat-jma" :class="{ live: p2pConnected }">
+          <span class="stat-label">Japan</span>{{ p2pConnected ? 'JMA live' : 'JMA connecting' }}
+        </span>
         <span class="stat-badge stat-source"><span class="stat-label">Sources</span>{{ activeSourceText }}</span>
         <span class="stat-badge stat-time"><span class="stat-label">Updated</span>{{ lastUpdate }}</span>
       </div>
@@ -35,6 +38,7 @@
     <div v-if="newAlerts.length" class="alert-bar" :class="{ shifted: !sidebarCollapsed && !isMobile }">
       <span v-for="alert in newAlerts.slice(0, 3)" :key="alert.id" class="alert-item">
         <b :style="{ color: magColor(alert.mag) }">M{{ formatMag(alert.mag) }}</b>
+        <span v-if="alert.source === 'JMA'" class="alert-tag">Japan live</span>
         {{ alert.place || 'Unknown location' }} · {{ timeAgo(alert.time) }}
       </span>
     </div>
@@ -98,16 +102,103 @@
         </div>
         <div class="filter-field layer-field">
           <div class="select-label">Map layers</div>
-          <button
-            type="button"
-            class="layer-toggle"
-            :class="{ active: showDepthRings }"
-            :aria-pressed="showDepthRings"
-            @click="toggleDepthRings"
-          >
-            <span class="toggle-dot" aria-hidden="true"></span>
-            Depth rings
-          </button>
+          <div class="option-stack">
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: showDepthRings }"
+              :aria-pressed="showDepthRings"
+              @click="toggleDepthRings"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              Depth rings
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: audioAlertsEnabled }"
+              :aria-pressed="audioAlertsEnabled"
+              @click="toggleAudioAlerts"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              M5+ sound
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: liveFocusEnabled }"
+              :aria-pressed="liveFocusEnabled"
+              @click="liveFocusEnabled = !liveFocusEnabled"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              Live focus M5+
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: desktopNotificationsEnabled }"
+              :aria-pressed="desktopNotificationsEnabled"
+              @click="toggleDesktopNotifications"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              Local notify
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: timeMode === 'utc' }"
+              :aria-pressed="timeMode === 'utc'"
+              @click="toggleTimeMode"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              UTC time
+            </button>
+          </div>
+        </div>
+        <div class="filter-field export-field">
+          <div class="select-label">Export</div>
+          <div class="export-actions">
+            <button type="button" class="quick-action" :disabled="!filteredEvents.length" @click="exportEvents('csv')">
+              CSV
+            </button>
+            <button type="button" class="quick-action" :disabled="!filteredEvents.length" @click="exportEvents('geojson')">
+              GeoJSON
+            </button>
+          </div>
+        </div>
+        <div class="filter-field replay-field">
+          <div class="select-label">Historical replay</div>
+          <div class="replay-box" :class="{ active: replayEnabled }">
+            <div class="replay-row">
+              <button
+                type="button"
+                class="layer-toggle replay-main"
+                :class="{ active: replayEnabled }"
+                :aria-pressed="replayEnabled"
+                @click="toggleReplay"
+              >
+                <span class="toggle-dot" aria-hidden="true"></span>
+                Replay mode
+              </button>
+              <button type="button" class="quick-action replay-play" :disabled="!replayEnabled || !baseFilteredEvents.length" @click="toggleReplayPlayback">
+                {{ replayPlaying ? 'Pause' : 'Play' }}
+              </button>
+            </div>
+            <input
+              class="replay-slider"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              :value="replayProgress"
+              :disabled="!replayEnabled || !baseFilteredEvents.length"
+              @input="setReplayProgress($event.target.value)"
+            >
+            <div class="replay-meta">
+              <span>{{ replayEnabled ? replayTimeLabel : 'Off' }}</span>
+              <button type="button" class="mini-link" :disabled="!replayEnabled" @click="resetReplay">Reset</button>
+            </div>
+          </div>
         </div>
         <div class="filter-field quick-field">
           <div class="select-label">Quick focus</div>
@@ -162,7 +253,7 @@
       <div class="detail-grid">
         <div class="detail-item">
           <span class="detail-label">Time</span>
-          <span class="detail-value">{{ new Date(selectedEvent.time).toLocaleString() }}</span>
+          <span class="detail-value">{{ formatEventTime(selectedEvent.time) }}</span>
         </div>
         <div class="detail-item">
           <span class="detail-label">Depth</span>
@@ -180,11 +271,52 @@
           <span class="detail-label">Source</span>
           <span class="detail-value">{{ selectedEvent.source }}</span>
         </div>
+        <div v-if="selectedEvent.detail || selectedEvent.url" class="detail-action-row">
+          <button type="button" class="detail-action" @click="loadShakeMap(selectedEvent)">
+            MMI ShakeMap
+          </button>
+          <a v-if="selectedEvent.url" class="detail-action" :href="selectedEvent.url" target="_blank" rel="noopener noreferrer">Source page</a>
+        </div>
         <div v-if="selectedEvent.tsunami" class="detail-item">
           <span class="detail-label">Tsunami</span>
           <span class="detail-value danger">Alert</span>
         </div>
       </div>
+    </section>
+
+    <section v-if="shakeMap.open" class="shakemap-panel" :class="{ shifted: !sidebarCollapsed && !isMobile }">
+      <button class="detail-close icon-btn" type="button" aria-label="Close ShakeMap" @click="closeShakeMap">x</button>
+      <div class="shakemap-title">MMI ShakeMap</div>
+      <div class="shakemap-subtitle">{{ shakeMap.place || 'Selected event' }}</div>
+      <div v-if="shakeMap.loading" class="shakemap-state">Loading ShakeMap...</div>
+      <div v-else-if="shakeMap.error" class="shakemap-state">{{ shakeMap.error }}</div>
+      <a v-else-if="shakeMap.imageUrl" :href="shakeMap.productUrl || shakeMap.imageUrl" target="_blank" rel="noopener noreferrer">
+        <img class="shakemap-image" :src="shakeMap.imageUrl" alt="USGS ShakeMap intensity image">
+      </a>
+      <div v-if="shakeMap.productUrl" class="shakemap-links">
+        <a :href="shakeMap.productUrl" target="_blank" rel="noopener noreferrer">Open USGS product</a>
+      </div>
+    </section>
+
+    <section v-if="liveFocusEvent" class="broadcast-panel" :class="{ shifted: !sidebarCollapsed && !isMobile }">
+      <div class="broadcast-kicker">
+        <span class="broadcast-live-dot" aria-hidden="true"></span>
+        Live earthquake focus
+      </div>
+      <div class="broadcast-main">
+        <div class="broadcast-mag" :style="{ color: magColor(liveFocusEvent.mag) }">
+          M{{ formatMag(liveFocusEvent.mag) }}
+        </div>
+        <div class="broadcast-info">
+          <div class="broadcast-place">{{ liveFocusEvent.place || 'Unknown location' }}</div>
+          <div class="broadcast-meta">
+            <span>{{ formatEventTime(liveFocusEvent.time) }}</span>
+            <span>{{ liveFocusEvent.depth?.toFixed(1) || '?' }} km</span>
+            <span>{{ liveFocusEvent.source || 'Unknown source' }}</span>
+          </div>
+        </div>
+      </div>
+      <button class="broadcast-close icon-btn" type="button" aria-label="Close live focus" @click="clearLiveFocus">x</button>
     </section>
 
     <section class="legend-panel" :class="{ open: legendOpen, mobile: isMobile }">
@@ -275,11 +407,27 @@ const lastUpdate = ref('-')
 const connected = ref(false)
 const loadingData = ref(false)
 const showDepthRings = ref(false)
+const audioAlertsEnabled = ref(false)
+const liveFocusEnabled = ref(true)
+const desktopNotificationsEnabled = ref(false)
+const timeMode = ref('local')
+const replayEnabled = ref(false)
+const replayPlaying = ref(false)
+const replayProgress = ref(100)
 const sidebarCollapsed = ref(true)
 const mobileSidebarOpen = ref(false)
 const legendOpen = ref(false)
 const isMobile = ref(false)
 const p2pConnected = ref(false)
+const shakeMap = ref({
+  open: false,
+  loading: false,
+  place: '',
+  imageUrl: '',
+  productUrl: '',
+  error: '',
+})
+const liveFocusEvent = ref(null)
 
 let map = null
 let markerLayer = null
@@ -292,6 +440,10 @@ let initialLoadDone = false
 let suppressNextFreshAlerts = false
 let knownIds = new Set()
 let alertTimers = []
+let audioContext = null
+let lastAudioAlertAt = 0
+let replayTimer = null
+let liveFocusTimer = null
 const feedCache = new Map()
 
 const FEED_CACHE_MS = 55_000
@@ -303,9 +455,29 @@ const NEW_MARKER_MS = 30_000
 const selectedFeed = computed(() => catalogWindows.find(feed => feed.key === currentFeed.value) || catalogWindows[1])
 const selectedFeedLabel = computed(() => selectedFeed.value.label)
 const sortedEvents = computed(() => [...events.value].sort((a, b) => b.time - a.time))
-const filteredEvents = computed(() => {
+const baseFilteredEvents = computed(() => {
   if (magFilter.value <= 0) return sortedEvents.value
   return sortedEvents.value.filter(event => event.mag >= magFilter.value)
+})
+const replayBounds = computed(() => {
+  const items = baseFilteredEvents.value
+  if (!items.length) return { start: 0, end: 0, span: 0 }
+  const times = items.map(event => event.time).filter(Number.isFinite)
+  const start = Math.min(...times)
+  const end = Math.max(...times)
+  return { start, end, span: Math.max(1, end - start) }
+})
+const replayTime = computed(() => {
+  if (!replayEnabled.value) return replayBounds.value.end
+  return replayBounds.value.start + replayBounds.value.span * (replayProgress.value / 100)
+})
+const replayTimeLabel = computed(() => {
+  if (!baseFilteredEvents.value.length) return 'No events'
+  return formatEventTime(replayTime.value)
+})
+const filteredEvents = computed(() => {
+  if (!replayEnabled.value) return baseFilteredEvents.value
+  return baseFilteredEvents.value.filter(event => event.time <= replayTime.value)
 })
 const displayedEvents = computed(() => filteredEvents.value.slice(0, 650))
 const hiddenEventCount = computed(() => Math.max(0, filteredEvents.value.length - displayedEvents.value.length))
@@ -375,7 +547,7 @@ function popupContentFor(eq) {
       <div style="font-size:24px;font-weight:800;color:${magColor(eq.mag)};margin-bottom:4px;">M${formatMag(eq.mag)}</div>
       <div style="font-weight:650;margin-bottom:8px;">${safePlace}</div>
       <div style="color:#aaa;line-height:1.7;font-size:12px;">
-        <div>Time: <b>${new Date(eq.time).toLocaleString()}</b></div>
+        <div>Time: <b>${formatEventTime(eq.time)}</b></div>
         <div>Depth: <b>${eq.depth?.toFixed(1) || '?'} km</b></div>
         <div>Source: <b>${safeSource}</b></div>
         ${eq.mmi != null ? `<div>Max Intensity: <b style="color:${mmiColor(eq.mmi)};">MMI ${romanMmi(eq.mmi)}</b></div>` : ''}
@@ -384,6 +556,19 @@ function popupContentFor(eq) {
       ${safeUrl ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color:#4da6ff;display:inline-block;margin-top:8px;font-size:12px;">Source detail</a>` : ''}
     </div>
   `
+}
+
+function formatEventTime(timestamp) {
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.getTime())) return '-'
+  if (timeMode.value === 'utc') {
+    return `${date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '')} UTC`
+  }
+  return `${date.toLocaleString()} Local`
+}
+
+function formatFileStamp(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', 'UTC')
 }
 
 function checkMobile() {
@@ -508,6 +693,297 @@ function toggleDepthRings() {
   nextTick().then(renderMarkers)
 }
 
+function toggleTimeMode() {
+  timeMode.value = timeMode.value === 'local' ? 'utc' : 'local'
+}
+
+function toggleReplay() {
+  replayEnabled.value = !replayEnabled.value
+  if (replayEnabled.value) {
+    replayProgress.value = 0
+  } else {
+    stopReplayPlayback()
+    replayProgress.value = 100
+  }
+  nextTick().then(renderMarkers)
+}
+
+function setReplayProgress(value) {
+  replayProgress.value = Math.max(0, Math.min(100, Number(value) || 0))
+  nextTick().then(renderMarkers)
+}
+
+function toggleReplayPlayback() {
+  if (!replayEnabled.value || !baseFilteredEvents.value.length) return
+  if (replayPlaying.value) {
+    stopReplayPlayback()
+    return
+  }
+  replayPlaying.value = true
+  replayTimer = setInterval(() => {
+    const next = replayProgress.value + 1
+    if (next >= 100) {
+      replayProgress.value = 100
+      stopReplayPlayback()
+    } else {
+      replayProgress.value = next
+    }
+    nextTick().then(renderMarkers)
+  }, 550)
+}
+
+function stopReplayPlayback() {
+  replayPlaying.value = false
+  if (replayTimer) {
+    clearInterval(replayTimer)
+    replayTimer = null
+  }
+}
+
+function resetReplay() {
+  stopReplayPlayback()
+  replayProgress.value = 0
+  nextTick().then(renderMarkers)
+}
+
+async function toggleAudioAlerts() {
+  audioAlertsEnabled.value = !audioAlertsEnabled.value
+  if (audioAlertsEnabled.value) {
+    await ensureAudioContext()
+    playAudioAlert('test')
+  }
+}
+
+async function toggleDesktopNotifications() {
+  if (!('Notification' in window)) {
+    desktopNotificationsEnabled.value = false
+    return
+  }
+  if (desktopNotificationsEnabled.value) {
+    desktopNotificationsEnabled.value = false
+    return
+  }
+  if (Notification.permission === 'granted') {
+    desktopNotificationsEnabled.value = true
+    return
+  }
+  if (Notification.permission !== 'denied') {
+    const permission = await Notification.requestPermission()
+    desktopNotificationsEnabled.value = permission === 'granted'
+  }
+}
+
+async function ensureAudioContext() {
+  if (!audioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextClass) {
+      audioAlertsEnabled.value = false
+      return null
+    }
+    audioContext = new AudioContextClass()
+  }
+  if (audioContext.state === 'suspended') await audioContext.resume()
+  return audioContext
+}
+
+async function playAudioAlert(kind = 'alert') {
+  if (!audioAlertsEnabled.value) return
+  const context = await ensureAudioContext()
+  if (!context) return
+
+  const now = context.currentTime
+  const volume = context.createGain()
+  volume.gain.setValueAtTime(0.0001, now)
+  volume.gain.exponentialRampToValueAtTime(kind === 'test' ? 0.035 : 0.055, now + 0.02)
+  volume.gain.exponentialRampToValueAtTime(0.0001, now + 0.55)
+  volume.connect(context.destination)
+
+  const tones = kind === 'test' ? [660] : [740, 980]
+  tones.forEach((frequency, index) => {
+    const start = now + index * 0.18
+    const oscillator = context.createOscillator()
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(frequency, start)
+    oscillator.connect(volume)
+    oscillator.start(start)
+    oscillator.stop(start + 0.16)
+  })
+}
+
+function playFreshEventAudio(items) {
+  if (!audioAlertsEnabled.value) return
+  if (!items.some(eq => eq.mag >= 5)) return
+  const now = Date.now()
+  if (now - lastAudioAlertAt < 10_000) return
+  lastAudioAlertAt = now
+  playAudioAlert('alert')
+}
+
+function sendFreshEventNotification(items) {
+  if (!desktopNotificationsEnabled.value || !('Notification' in window) || Notification.permission !== 'granted') return
+  const event = [...items].sort((a, b) => (b.mag ?? -1) - (a.mag ?? -1))[0]
+  if (!event || event.mag < 5) return
+  const title = `M${formatMag(event.mag)} earthquake`
+  const body = `${event.place || 'Unknown location'} · ${timeAgo(event.time)} · ${event.source || 'Unknown source'}`
+  const notification = new Notification(title, {
+    body,
+    tag: String(event.id || event.time),
+    renotify: false,
+    silent: audioAlertsEnabled.value,
+  })
+  notification.onclick = () => {
+    window.focus()
+    focusEvent(event)
+    notification.close()
+  }
+}
+
+function exportEvents(format) {
+  const items = filteredEvents.value
+  if (!items.length) return
+  const stamp = formatFileStamp()
+  if (format === 'geojson') {
+    downloadText(
+      `global-quake-${stamp}.geojson`,
+      JSON.stringify(toGeoJson(items), null, 2),
+      'application/geo+json'
+    )
+    return
+  }
+  downloadText(
+    `global-quake-${stamp}.csv`,
+    toCsv(items),
+    'text/csv;charset=utf-8'
+  )
+}
+
+function toGeoJson(items) {
+  return {
+    type: 'FeatureCollection',
+    features: items.map(eq => ({
+      type: 'Feature',
+      id: eq.id,
+      geometry: {
+        type: 'Point',
+        coordinates: [eq.lng, eq.lat, eq.depth ?? null],
+      },
+      properties: {
+        magnitude: eq.mag ?? null,
+        depthKm: eq.depth ?? null,
+        place: eq.place || null,
+        time: new Date(eq.time).toISOString(),
+        source: eq.source || null,
+        mmi: eq.mmi ?? null,
+        felt: eq.felt ?? null,
+        tsunami: eq.tsunami || 0,
+        url: eq.url || null,
+      },
+    })),
+  }
+}
+
+function toCsv(items) {
+  const headers = ['id', 'time_utc', 'magnitude', 'depth_km', 'latitude', 'longitude', 'place', 'source', 'mmi', 'felt', 'tsunami', 'url']
+  const rows = items.map(eq => [
+    eq.id,
+    new Date(eq.time).toISOString(),
+    eq.mag ?? '',
+    eq.depth ?? '',
+    eq.lat ?? '',
+    eq.lng ?? '',
+    eq.place || '',
+    eq.source || '',
+    eq.mmi ?? '',
+    eq.felt ?? '',
+    eq.tsunami || 0,
+    eq.url || '',
+  ])
+  return [headers, ...rows].map(row => row.map(csvEscape).join(',')).join('\n')
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '')
+  if (!/[",\n\r]/.test(text)) return text
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function downloadText(filename, content, type) {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+async function loadShakeMap(eq) {
+  shakeMap.value = {
+    open: true,
+    loading: true,
+    place: eq.place || 'Selected event',
+    imageUrl: '',
+    productUrl: eq.url || '',
+    error: '',
+  }
+
+  if (!eq.detail) {
+    shakeMap.value = {
+      ...shakeMap.value,
+      loading: false,
+      error: 'ShakeMap is only available for some USGS events.',
+    }
+    return
+  }
+
+  try {
+    const response = await fetch(eq.detail)
+    if (!response.ok) throw new Error(`USGS detail ${response.status}`)
+    const detail = await response.json()
+    const product = detail.properties?.products?.shakemap?.[0]
+    const contents = product?.contents || {}
+    const entries = Object.entries(contents)
+    const imageEntry = entries.find(([key]) => /download\/intensity\.(jpg|png)$/i.test(key))
+      || entries.find(([key]) => /intensity\.(jpg|png)$/i.test(key))
+      || entries.find(([key]) => /download\/stationlist\.(jpg|png)$/i.test(key))
+
+    if (!product || !imageEntry) {
+      shakeMap.value = {
+        ...shakeMap.value,
+        loading: false,
+        productUrl: product?.eventsource && product?.eventsourcecode
+          ? `https://earthquake.usgs.gov/product/shakemap/${product.eventsource}${product.eventsourcecode}/atlas`
+          : (eq.url || ''),
+        error: 'No ShakeMap intensity image was published for this event.',
+      }
+      return
+    }
+
+    shakeMap.value = {
+      ...shakeMap.value,
+      loading: false,
+      imageUrl: imageEntry[1].url,
+      productUrl: product.properties?.eventsource && product.properties?.eventsourcecode
+        ? `https://earthquake.usgs.gov/product/shakemap/${product.properties.eventsource}${product.properties.eventsourcecode}/atlas`
+        : (eq.url || imageEntry[1].url),
+      error: '',
+    }
+  } catch (err) {
+    shakeMap.value = {
+      ...shakeMap.value,
+      loading: false,
+      error: 'Unable to load ShakeMap right now.',
+    }
+  }
+}
+
+function closeShakeMap() {
+  shakeMap.value.open = false
+}
+
 function visibleWorldOffsets() {
   if (!map) return [0]
   const bounds = map.getBounds()
@@ -524,15 +1000,17 @@ function isLngNearView(lng) {
   return lng >= bounds.getWest() - 80 && lng <= bounds.getEast() + 80
 }
 
-function focusEvent(eq) {
+function focusEvent(eq, options = {}) {
   if (!map || eq.lat == null || eq.lng == null) return
   selectedEvent.value = eq
   if (isMobile.value) mobileSidebarOpen.value = false
   const mag = Number.isFinite(eq.mag) ? eq.mag : 3
   const openPopup = () => L.popup({ maxWidth: 300 }).setLatLng([eq.lat, eq.lng]).setContent(popupContentFor(eq)).openOn(map)
   map.once('moveend', () => nextTick().then(openPopup))
-  map.flyTo([eq.lat, eq.lng], Math.max(6, 8 - mag * 0.4), { duration: 1 })
-  setTimeout(openPopup, 1300)
+  const zoom = options.zoom ?? Math.max(6, 8 - mag * 0.4)
+  const duration = options.duration ?? 1
+  map.flyTo([eq.lat, eq.lng], zoom, { duration })
+  setTimeout(openPopup, Math.round(duration * 1000) + 300)
 }
 
 function convertJmaScale(scale) {
@@ -550,6 +1028,9 @@ function pushNewAlerts(items) {
   if (!freshAlerts.length) return
 
   newAlerts.value = [...freshAlerts, ...newAlerts.value].slice(0, 5)
+  playFreshEventAudio(freshAlerts)
+  sendFreshEventNotification(freshAlerts)
+  triggerLiveFocus(freshAlerts)
   alertTimers.forEach(clearTimeout)
   alertTimers = []
   alertTimers.push(setTimeout(() => { newAlerts.value = [] }, ALERT_DISPLAY_MS))
@@ -561,6 +1042,37 @@ function pushNewAlerts(items) {
     newIds.value = new Set()
     nextTick().then(renderMarkers)
   }, NEW_MARKER_MS))
+}
+
+function triggerLiveFocus(items) {
+  if (!liveFocusEnabled.value || replayEnabled.value) return
+  const event = [...items]
+    .filter(eq => eq.mag >= 5 && eq.lat != null && eq.lng != null)
+    .sort((a, b) => (b.mag ?? -1) - (a.mag ?? -1))[0]
+  if (!event) return
+
+  liveFocusEvent.value = event
+  selectedEvent.value = event
+  if (isMobile.value) mobileSidebarOpen.value = false
+  if (liveFocusTimer) clearTimeout(liveFocusTimer)
+
+  const mag = Number.isFinite(event.mag) ? event.mag : 5
+  const zoom = Math.max(5.8, Math.min(7.4, 8.15 - mag * 0.18))
+  focusEvent(event, { zoom, duration: 1.35 })
+  nextTick().then(renderMarkers)
+
+  liveFocusTimer = setTimeout(() => {
+    liveFocusEvent.value = null
+    liveFocusTimer = null
+  }, 45_000)
+}
+
+function clearLiveFocus() {
+  liveFocusEvent.value = null
+  if (liveFocusTimer) {
+    clearTimeout(liveFocusTimer)
+    liveFocusTimer = null
+  }
 }
 
 async function loadData() {
@@ -790,6 +1302,8 @@ onBeforeUnmount(() => {
     p2pSocket.onclose = null
     p2pSocket.close()
   }
+  if (audioContext) audioContext.close()
+  if (liveFocusTimer) clearTimeout(liveFocusTimer)
   alertTimers.forEach(clearTimeout)
   window.removeEventListener('resize', checkMobile)
 })
@@ -866,6 +1380,8 @@ onBeforeUnmount(() => {
 }
 .stat-badge.stat-m5 { color: #ffaa00; background: rgba(255,170,0,0.1); }
 .stat-badge.stat-m7 { color: #ff4444; background: rgba(255,68,68,0.1); }
+.stat-badge.stat-jma { color: #9aa4b6; }
+.stat-badge.stat-jma.live { color: #8fe7ff; background: rgba(55,212,216,0.1); }
 .stat-badge.stat-time { color: #888; }
 .stat-live { font-weight: 750; }
 .live-dot {
@@ -938,6 +1454,15 @@ onBeforeUnmount(() => {
   color: #ffcc88;
   white-space: nowrap;
 }
+.alert-tag {
+  margin: 0 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(55,212,216,0.12);
+  color: #8fe7ff;
+  font-size: 10px;
+  font-weight: 700;
+}
 @keyframes alertSlideIn {
   from { transform: translateY(-100%); }
   to { transform: translateY(0); }
@@ -1006,6 +1531,7 @@ onBeforeUnmount(() => {
 .filter-field { min-width: 0; }
 .source-field,
 .layer-field,
+.export-field,
 .quick-field { grid-column: 1 / -1; }
 .select-label {
   display: block;
@@ -1090,6 +1616,65 @@ onBeforeUnmount(() => {
 .layer-toggle.active .toggle-dot::after {
   transform: translateX(8px);
   background: #8ef6ff;
+}
+.option-stack {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.export-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.replay-box {
+  display: grid;
+  gap: 7px;
+  padding: 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.035);
+}
+.replay-box.active {
+  border-color: rgba(77,166,255,0.24);
+  background: rgba(77,166,255,0.07);
+}
+.replay-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 6px;
+}
+.replay-main {
+  min-width: 0;
+}
+.replay-play {
+  min-height: 32px;
+}
+.replay-slider {
+  width: 100%;
+  accent-color: #4da6ff;
+}
+.replay-slider:disabled {
+  opacity: 0.45;
+}
+.replay-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  color: #8f98aa;
+  font-size: 10px;
+}
+.mini-link {
+  border: 0;
+  background: transparent;
+  color: #77bdff;
+  font-size: 10px;
+  cursor: pointer;
+}
+.mini-link:disabled {
+  color: #596172;
+  cursor: default;
 }
 .quick-actions {
   display: grid;
@@ -1197,6 +1782,152 @@ onBeforeUnmount(() => {
   transition: left 0.3s ease;
 }
 .detail-panel.shifted { left: 340px; }
+.shakemap-panel {
+  position: absolute;
+  right: 18px;
+  bottom: 198px;
+  z-index: 1000;
+  width: min(360px, calc(100vw - 76px));
+  max-height: 42vh;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(15,18,31,0.96);
+  backdrop-filter: blur(14px);
+}
+.shakemap-title {
+  padding-right: 28px;
+  color: #eef3ff;
+  font-size: 14px;
+  font-weight: 800;
+}
+.shakemap-subtitle {
+  margin: 3px 28px 10px 0;
+  color: #8f98aa;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.shakemap-state {
+  padding: 18px 4px;
+  color: #9da8bd;
+  font-size: 12px;
+}
+.shakemap-image {
+  display: block;
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.shakemap-links {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.shakemap-links a {
+  color: #77bdff;
+}
+.broadcast-panel {
+  position: absolute;
+  left: 58px;
+  right: 18px;
+  bottom: 26px;
+  z-index: 1002;
+  min-height: 92px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  padding: 13px 48px 13px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 68, 68, 0.42);
+  background:
+    linear-gradient(90deg, rgba(110, 12, 12, 0.96), rgba(23, 26, 42, 0.96) 46%, rgba(15, 18, 31, 0.92)),
+    rgba(15,18,31,0.96);
+  box-shadow: 0 18px 46px rgba(0,0,0,0.48), inset 4px 0 0 rgba(255,68,68,0.92);
+  backdrop-filter: blur(16px);
+  animation: broadcastIn 0.28s ease;
+}
+.broadcast-panel.shifted {
+  left: 340px;
+}
+.broadcast-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgba(255,68,68,0.2);
+  color: #ffdddd;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.broadcast-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4444;
+  box-shadow: 0 0 12px rgba(255,68,68,0.85);
+  animation: livePulse 1s ease-in-out infinite;
+}
+.broadcast-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.broadcast-mag {
+  min-width: 86px;
+  font-size: 44px;
+  line-height: 0.95;
+  font-weight: 900;
+  text-shadow: 0 2px 16px rgba(0,0,0,0.5);
+}
+.broadcast-info {
+  min-width: 0;
+}
+.broadcast-place {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 820;
+}
+.broadcast-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+  color: #c7cfdf;
+  font-size: 12px;
+}
+.broadcast-meta span {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.08);
+}
+.broadcast-close {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.08);
+  color: #e7edf8;
+  cursor: pointer;
+}
+@keyframes broadcastIn {
+  from { transform: translateY(18px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes livePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.45); opacity: 0.68; }
+}
 .detail-close {
   position: absolute;
   top: 8px;
@@ -1229,6 +1960,25 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+.detail-action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+.detail-action {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid rgba(77,166,255,0.25);
+  background: rgba(77,166,255,0.1);
+  color: #9fd0ff;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
 }
 .detail-label {
   color: #888;
@@ -1460,6 +2210,35 @@ onBeforeUnmount(() => {
     border-radius: 10px 10px 4px 4px;
   }
   .detail-panel.shifted { left: 10px; }
+  .broadcast-panel,
+  .broadcast-panel.shifted {
+    left: 8px;
+    right: 8px;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 6px);
+    min-height: 86px;
+    padding: 10px 42px 10px 10px;
+  }
+  .broadcast-main {
+    gap: 9px;
+  }
+  .broadcast-mag {
+    min-width: 62px;
+    font-size: 32px;
+  }
+  .broadcast-place {
+    font-size: 15px;
+  }
+  .broadcast-meta {
+    gap: 5px;
+    font-size: 10px;
+  }
+  .shakemap-panel {
+    left: 10px;
+    right: 10px;
+    bottom: calc(46dvh + 20px);
+    width: auto;
+    max-height: 36dvh;
+  }
   .detail-mag { font-size: 28px; }
   .detail-close {
     width: 34px;

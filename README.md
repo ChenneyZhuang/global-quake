@@ -1,250 +1,306 @@
-# 🌍 Global Quake
+# Global Quake
 
-**Real-time worldwide earthquake monitor. Zero API cost. No backend.**
+Global Quake is a zero-backend, browser-based earthquake monitor built with Vue 3 and Leaflet. It aggregates public earthquake catalogs, renders a responsive world map, and provides lightweight monitoring tools for desktop and mobile.
 
-A free, open-source earthquake dashboard powered by 5 public data sources, delivering near-real-time seismic events from across the globe. Built with Vue 3 + Leaflet, optimized for both desktop and mobile.
+The project is inspired by earthquake monitoring tools such as kanameishi, JQuake, TREM-Lite, GlobalQuake, and Zero-Quake, but the implementation here is original and designed to run as a static web app.
 
-👉 **[Live Demo](https://quakenow.duckdns.org:8445/)**
+> Important: Global Quake is an informational monitoring dashboard. It is not an official earthquake warning service. Always follow local emergency agencies for safety decisions.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/framework-Vue%203-42b883?logo=vue.js" alt="Vue 3">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/data%20sources-5-blue" alt="5 data sources">
-  <img src="https://img.shields.io/badge/API%20keys-none-brightgreen" alt="No API keys">
-  <img src="https://img.shields.io/badge/cost-%240-free" alt="Zero cost">
-</p>
+## Live Demo
 
----
+[https://quakenow.duckdns.org:8445/](https://quakenow.duckdns.org:8445/)
 
-## ✨ Features
+## Highlights
 
-### Data
-- **5 free data sources** — USGS · EMSC · GFZ/GEOFON · GeoNet (NZ) · JMA via P2PQuake WebSocket
-- **Toggle sources on/off** — mix and match any combination of providers
-- **Near-real-time** — USGS/EMSC/GFZ/GeoNet via 60s polling, Japan events via WebSocket (< 5 seconds)
-- **Catalog windows** — Past Hour / Past 24 Hours / Past 7 Days
-- **All magnitudes** — from micro-quakes (~M1.0) to great earthquakes (M8+)
+- Global earthquake map powered by public data sources
+- No API key, no backend, no database
+- Vue 3 + Leaflet + Vite
+- USGS, EMSC, GFZ/GEOFON, GeoNet, and P2PQuake/JMA support
+- Japan live events through P2PQuake WebSocket
+- Magnitude-first map markers with optional depth rings
+- TV-style live focus for genuinely new M5.0+ events
+- Historical replay mode for the selected catalog window
+- M5+ audio alerts and local browser notifications
+- Local/UTC timestamp toggle
+- CSV and GeoJSON export
+- PWA manifest and service worker for installable/offline app shell
+- Mobile-first drawer layout and touch-friendly controls
 
-### Map
-- **JQuake-inspired color scale** — magnitude-colored circles from green (M1-2) through yellow/orange/red to purple (M8+)
-- **Depth-colored rings** (toggleable) — shallow (warm cyan) to deep (cool purple)
-- **Zoom-scaled markers** — small dots at world view, detailed rings when zoomed in
-- **World wrapping** — seamless horizontal panning with `worldCopyJump`
-- **Canvas renderer** — smooth performance with hundreds of markers
-- **Rich popups** — magnitude, location, depth, MMI intensity, tsunami alerts, source links
-- **Max bounds with viscosity** — gentle resistance at map edges
+## Current Feature Status
 
-### UI
-- **Dark theme** — designed for 24/7 monitoring, low eye strain
-- **Live indicator** — pulsing green dot when data is flowing
-- **Stats bar** — total events, M5+ count, M7+ count, active sources, last update time
-- **New event alerts** — gold notification bar with auto-dismiss when fresh earthquakes arrive
-- **Magnitude filter** — M1-2 / M3-4 / M5-6 / M7+ quick filters
-- **Sidebar** — scrollable event list with magnitude-colored badges and source tags
-- **Detail panel** — full event info on click: coordinates, depth, MMI, felt reports, tsunami status
-- **Collapsible legends** — magnitude color scale + depth color scale
-- **Keyboard navigation** — arrow keys pan map, +/- zoom, Escape closes panels
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Multi-source earthquake catalog | Implemented | USGS, EMSC, GFZ, GeoNet, P2PQuake/JMA |
+| World map | Implemented | Leaflet + CARTO dark basemap |
+| Infinite horizontal panning | Implemented | Wrapped marker copies around world boundaries |
+| Magnitude markers | Implemented | Marker fill color and size prioritize magnitude |
+| Depth rings | Implemented | Optional map layer, disabled by default |
+| Live focus mode | Implemented | Auto-fly and broadcast lower-third for genuinely new M5.0+ events |
+| M5+ audio alerts | Implemented | Browser AudioContext, user-enabled |
+| Local notifications | Implemented | Uses browser Notification API while app is open |
+| Timezone-aware timestamps | Implemented | Local/UTC toggle |
+| CSV/GeoJSON export | Implemented | Exports current filtered catalog |
+| Historical replay | Implemented | Timeline slider and play/pause controls |
+| PWA offline shell | Implemented | Caches app shell and static assets |
+| USGS ShakeMap panel | Basic | Loads ShakeMap intensity image when USGS publishes one |
+| Japan EEW integration | Basic/live-info only | P2PQuake/JMA event stream; not a certified EEW service |
+| Web Push API | Not yet | Needs a push subscription server |
+| 3D globe | Not yet | Deferred until 2D UX is stable |
+| Tauri packaging | Not yet | Deferred until web app stabilizes |
 
-### Mobile
-- **Hamburger drawer sidebar** — overlay panel, doesn't block map
-- **Responsive layout** — reflows for small screens (< 768px)
-- **Pinch zoom** — Leaflet `touchZoom` with `bounceAtZoomLimits: false`
-- **Safe areas** — respects iPhone notch / Dynamic Island
-- **Large touch targets** — 36×36px buttons, scrollable lists
-- **Detail panel** — bottom sheet on mobile, side panel on desktop
+## Screens and Controls
 
-### Engineering
-- **XSS-safe** — all user-visible text HTML-escaped
-- **ARIA labels** — buttons have `aria-label`, toggles have `aria-pressed`
-- **Feed caching** — 55-second cache per window to avoid redundant fetches
-- **De-duplication** — `knownIds` Set prevents duplicate events across sources
-- **Memory management** — max 650 visible events, old markers cleaned up
-- **No state library** — pure Vue 3 Composition API (`ref`, `computed`)
-- **Pure static SPA** — deploy anywhere: nginx, S3, GitHub Pages, Cloudflare Pages
+### Top Bar
 
----
+The top bar shows total events, M5+ and M7+ counts, live/loading state, catalog window, Japan live status, active sources, and the last update time.
 
-## 📡 Data Sources
+### Sidebar
 
-| Source | Coverage | Protocol | Latency | Rate Limit |
-|--------|----------|----------|---------|------------|
-| **USGS** | Global | GeoJSON feed (polling) | ~1-5 min | None (public) |
-| **EMSC** | Global, best for Europe/Med | FDSN JSON (polling) | ~2-10 min | Fair-use |
-| **GFZ/GEOFON** | Global catalog | FDSN GeoJSON (polling) | ~2-10 min | Fair-use |
-| **GeoNet** | New Zealand region | REST API (polling) | ~1-5 min | Fair-use |
-| **P2PQuake/JMA** | Japan region | WebSocket (streaming) | < 5 seconds | Anonymous |
+The sidebar contains:
 
-All sources are **free, public, and require no API key**. All return earthquake data that is globally accessible with fair-use constraints.
+- Catalog window selector: past hour, past 24 hours, past 7 days
+- Magnitude filter
+- Source toggles
+- Map layer toggles
+- Live focus M5+ toggle
+- Historical replay controls
+- CSV and GeoJSON export buttons
+- Quick focus buttons for latest and strongest events
+- Scrollable event list
 
----
+### Map Markers
 
-## 🚀 Quick Start
+Global Quake uses a magnitude-first visual hierarchy:
 
-```bash
-git clone https://github.com/ChenneyZhuang/global-quake.git
-cd global-quake
-npm install
-npm run dev        # Dev server at http://localhost:5173
-npm run build      # Production build → dist/
-```
+- Marker fill color: magnitude
+- Marker size: magnitude
+- Marker outline: neutral by default
+- Optional depth rings: depth shown as a cool colored outline
+- New event highlight: temporary gold ring/glow
 
-Serve `dist/` with any static file server:
+Depth is useful, but it is intentionally secondary because magnitude is what most users need first when scanning a live earthquake map.
 
-```bash
-# Python
-python3 -m http.server -d dist 8080
+### Historical Replay
 
-# Node.js
-npx serve dist
+Replay mode works on the current catalog window and current filters. Turn it on, drag the timeline, or press Play to watch events appear over time.
 
-# nginx
-# point root to dist/ and add try_files $uri /index.html
-```
+Replay is client-side only. It does not fetch archived datasets beyond the selected catalog window.
 
----
+### Alerts and Notifications
 
-## 🏗️ Architecture
+Global Quake has two local alert types:
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Global Quake                      │
-│                   (Vue 3 SPA)                         │
-├─────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
-│  │  USGS Feed  │  │ EMSC FDSN    │  │ GFZ FDSN   │ │
-│  │  (poll 60s) │  │ (poll 60s)   │  │ (poll 60s) │ │
-│  └──────┬──────┘  └──────┬───────┘  └──────┬─────┘ │
-│         │                │                  │        │
-│  ┌──────┴──────┐  ┌──────┴───────┐         │        │
-│  │  GeoNet API │  │ P2PQuake WS  │         │        │
-│  │ (poll 60s)  │  │  (streaming) │         │        │
-│  └──────┬──────┘  └──────┬───────┘         │        │
-│         │                │                  │        │
-│         └────────────────┼──────────────────┘        │
-│                          ▼                           │
-│                 ┌────────────────┐                   │
-│                 │  normalizeEvent │                   │
-│                 │  (unified model)│                   │
-│                 └───────┬────────┘                   │
-│                         ▼                            │
-│              ┌────────────────────┐                  │
-│              │  Events[] + knownIds │                 │
-│              └────────┬───────────┘                  │
-│                       ▼                              │
-│         ┌─────────────────────────┐                  │
-│         │  CanvasRenderer (Leaflet)│                  │
-│         │  Markers + Popups       │                  │
-│         └─────────────────────────┘                  │
-│                       ▼                              │
-│                 ┌───────────┐                        │
-│                 │   User UI │                        │
-│                 │  Dark Map │                        │
-│                 └───────────┘                        │
-└─────────────────────────────────────────────────────┘
-```
+- M5+ sound: plays a short tone when a genuinely new M5.0+ event arrives
+- Local notify: shows a browser notification for a genuinely new M5.0+ event when permission is granted
 
-**Data flow:**
-1. Five independent fetchers poll/stream from public APIs
-2. Each raw event passes through `normalizeEvent(feature, source)` → unified model
-3. Events deduplicated via `knownIds` Set (prevents USGS+EMSC duplicates)
-4. Sorted by recency, filtered by magnitude
-5. Canvas-rendered on Leaflet CARTO dark map
-6. User toggles sources, filters, catalog windows — map re-renders instantly
+These are local browser features. They are not server-side Web Push notifications, so they do not wake a closed browser.
 
----
+### Live Focus Mode
 
-## 📂 Project Structure
+Live focus mode is inspired by monitoring-room and TV-live earthquake dashboards. When a genuinely new M5.0+ event arrives, the map automatically flies to the epicenter, opens the event popup, and shows a broadcast-style lower-third with magnitude, place, depth, time, and source.
 
-```
+Live focus only runs for fresh events detected after the initial load. It does not trigger when changing catalog windows, replaying history, or revealing older events from another source.
+
+### ShakeMap Panel
+
+For some USGS events, Global Quake can load a USGS ShakeMap intensity image from the event detail feed. This is shown as a panel, not as a georeferenced raster overlay yet.
+
+Not every earthquake has a ShakeMap product.
+
+### Japan Live / EEW Boundary
+
+P2PQuake provides near-real-time Japan earthquake information derived from JMA-related public information. Global Quake labels those events as Japan live events.
+
+This is not a formal Earthquake Early Warning service. The app does not promise certified alert timing, delivery, or life-safety behavior.
+
+## Data Sources
+
+| Source | Coverage | Protocol | Use |
+| --- | --- | --- | --- |
+| USGS | Global | GeoJSON feed | Main global catalog, source links, ShakeMap detail where available |
+| EMSC | Global, Europe/Mediterranean strong | FDSN JSON | Independent catalog confirmation |
+| GFZ/GEOFON | Global | FDSN GeoJSON | Independent global seismic catalog |
+| GeoNet | New Zealand | REST GeoJSON | New Zealand regional catalog |
+| P2PQuake/JMA | Japan | WebSocket | Near-real-time Japan events |
+
+All data sources are public and do not require an API key. Fair-use behavior matters, so the app polls catalog sources on a conservative cadence.
+
+## Tech Stack
+
+- Vue 3 Composition API
+- Leaflet 1.9
+- Vite 6
+- Browser WebSocket
+- Browser Notification API
+- Browser AudioContext
+- Service Worker + Web App Manifest
+
+## Project Structure
+
+```text
 global-quake/
-├── index.html              # Entry point — viewport meta, touch-action, safe-area
-├── package.json            # Vue 3 + Leaflet + Vite
-├── vite.config.js          # Vite 6 + Vue plugin
-├── LICENSE                 # MIT
-├── README.md
-└── src/
-    ├── main.js             # Vue app create + mount
-    ├── App.vue             # ~1500 lines: map, sidebar, stats, detail, legend, all UI
-    └── utils/
-        └── api.js          # URL builders, fetchers, normalizer, color scales, helpers
+├── index.html
+├── package.json
+├── public/
+│   ├── manifest.webmanifest
+│   ├── service-worker.js
+│   └── icons/
+│       ├── icon-192.svg
+│       └── icon-512.svg
+├── src/
+│   ├── App.vue
+│   ├── main.js
+│   └── utils/
+│       └── api.js
+└── vite.config.js
 ```
 
-**Design choice:** A single `App.vue` monolith. For a dashboard this size (~1500 lines), splitting into 6+ components adds indirection without benefits. The data model is simple (one `events[]` reactive array), and the map/sidebar/detail all read from it directly — props drilling would be purely ceremonial.
+## Development
 
----
+```bash
+npm install
+npm run dev
+npm run build
+```
 
-## 🎨 Design & Inspiration
+Preview the production build:
 
-Built from scratch (MIT licensed). Studied architecture, UX, and visual design from these projects:
+```bash
+npm run build
+npm run preview
+```
 
-| Project | What We Learned |
-|---------|-----------------|
-| [kanameishi](https://github.com/Lipomoea/kanameishi) | Vue 3 + Leaflet integration, multi-source aggregation, depth-colored markers |
-| [JQuake](https://jquake.net/) | Real-time intensity display, magnitude color scale, EEW UX patterns |
-| [GlobalQuake](https://github.com/xspanger3770/GlobalQuake) | Info box UI, time range selector, SeedLink concept |
-| [TREM-Lite](https://github.com/ExpTechTW/TREM-Lite) | SSE streaming, dark theme, intensity color palettes |
-| [Zero-Quake](https://github.com/0Quake/Zero-Quake) | JMA intensity colors, Web Worker PGA detection concepts |
+The app is a static SPA. Anything that can serve the `dist/` folder can host it.
 
-**No AGPL/GPL code was used.** All implementation is original.
+## Deployment
 
----
+Build the project:
 
-## 🤔 FAQ
+```bash
+npm run build
+```
 
-### Why another earthquake map?
+Deploy the generated `dist/` directory to any static host:
 
-Existing projects like kanameishi and GlobalQuake are excellent, but they're limited to single regions (Japan) or require backend servers (SeedLink, WebSocket relays). Global Quake is the only one that:
+- Nginx
+- Caddy
+- GitHub Pages
+- Cloudflare Pages
+- Netlify
+- Vercel
+- S3-compatible object storage
 
-- Covers the entire planet
-- Aggregates 5 independent free sources
-- Runs as a pure static SPA (no backend, no API proxy)
-- Works on mobile out of the box
-- Costs $0 to run forever
+For SPA routing, configure fallback to `index.html` if you later add routes.
 
-### Why is it all in one file?
+## PWA Notes
 
-`App.vue` is ~1500 lines. For a project this size, the cost of component splitting (props, emits, provide/inject, coordination) exceeds the benefits. The data model is one reactive array shared by map, sidebar, stats, and detail — Vue's Composition API already provides clean separation via composable `ref`s and `computed`s. If the codebase grows to 3000+ lines, splitting would make sense.
+The service worker caches the app shell and same-origin static assets. It does not cache live earthquake API responses as authoritative offline data.
 
-### How does it handle rate limits?
+Offline behavior:
 
-USGS hosts public GeoJSON feeds with no rate limits. EMSC and GFZ are fair-use FDSN endpoints — at 60-second polling intervals (1 request per minute per source), you won't hit limits even on 24/7 monitoring. P2PQuake accepts anonymous WebSocket connections.
+- Previously loaded app shell can open offline
+- Live earthquake data requires network
+- External map tiles may not be available offline
 
-### Can I add more data sources?
+## Export Formats
 
-Yes. Add a fetcher in `src/utils/api.js`, a `normalizeEvent()` branch, and a source toggle in `App.vue`'s `sourceOptions`. The `knownIds` deduplication works automatically.
+### CSV
 
----
+Columns:
 
-## 🔮 Roadmap
+```text
+id,time_utc,magnitude,depth_km,latitude,longitude,place,source,mmi,felt,tsunami,url
+```
 
-- [ ] Audio alerts for M5.0+ events
-- [ ] Historical replay mode
-- [ ] 3D globe view (Cesium/Globe.GL)
-- [ ] PWA offline support (service worker + cache)
-- [ ] Tauri desktop app packaging
-- [ ] MMI shake map overlay
-- [ ] EEW (Earthquake Early Warning) integration for Japan
-- [ ] Push notifications via Web Push API
-- [ ] Timezone-aware timestamps
-- [ ] CSV/GeoJSON export
+### GeoJSON
 
----
+Exports a `FeatureCollection` with Point geometries:
 
-## 📄 License
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [longitude, latitude, depthKm]
+      },
+      "properties": {
+        "magnitude": 5.2,
+        "depthKm": 10,
+        "place": "example",
+        "source": "USGS"
+      }
+    }
+  ]
+}
+```
 
-MIT — see [LICENSE](LICENSE)
+## Design Decisions
 
----
+### Why magnitude first?
 
-## 🙏 Credits
+Magnitude is the fastest way to understand event importance on a global earthquake map. Depth is useful, but making depth equally prominent makes the map visually noisy. Global Quake therefore defaults to magnitude fill and neutral rings, with depth rings available as an optional layer.
 
-Data courtesy of:
+### Why a pure frontend app?
+
+A static app is cheap to host, easy to fork, and safer to deploy. The tradeoff is that features like Web Push, durable alert delivery, and official EEW handling require a backend and are intentionally not presented as completed here.
+
+### Why Canvas markers?
+
+The catalog can contain hundreds of events. Leaflet Canvas rendering is smoother than hundreds of SVG/DOM markers, especially on mobile.
+
+## Limitations
+
+- Not an official emergency alert system
+- No guaranteed delivery for audio or local notifications
+- Web Push requires future backend work
+- ShakeMap is only available for events where USGS publishes a product
+- P2PQuake/JMA integration is live earthquake information, not certified EEW
+- External APIs and map tiles require network access
+
+## Roadmap
+
+### Near Term
+
+- Improve historical replay labels and speed controls
+- Add settings persistence with `localStorage`
+- Add mobile-specific notification onboarding
+- Improve ShakeMap product detection and fallback links
+
+### Later
+
+- Web Push server and subscriptions
+- Proper georeferenced MMI raster overlay
+- Stronger Japan EEW integration with clearer source attribution
+- Optional 3D globe view after 2D map UX stabilizes
+- Tauri desktop packaging after web app behavior stabilizes
+
+## Credits
+
+Data sources:
+
 - [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/)
-- [EMSC (European-Mediterranean Seismological Centre)](https://www.emsc-csem.org/)
-- [GFZ German Research Centre for Geosciences](https://geofon.gfz-potsdam.de/)
-- [GeoNet (New Zealand)](https://www.geonet.org.nz/)
-- [P2PQuake](https://www.p2pquake.net/) — JMA seismic intensity data
+- [EMSC](https://www.emsc-csem.org/)
+- [GFZ/GEOFON](https://geofon.gfz-potsdam.de/)
+- [GeoNet](https://www.geonet.org.nz/)
+- [P2PQuake](https://www.p2pquake.net/)
 
-Basemap tiles by [CARTO](https://carto.com/) (dark_all theme).
+Map tiles:
 
-Built with ❤️ for the earthquake monitoring community.
+- [CARTO Dark Matter](https://carto.com/)
+- [OpenStreetMap contributors](https://www.openstreetmap.org/)
+
+Project inspiration:
+
+- [kanameishi](https://github.com/Lipomoea/kanameishi)
+- [JQuake](https://jquake.net/)
+- [TREM-Lite](https://github.com/ExpTechTW/TREM-Lite)
+- [TREM-tauri](https://github.com/ExpTechTW/TREM-tauri)
+- [EarthQuakeWarning](https://github.com/kengwang/EarthQuakeWarning)
+- [Zero-Quake](https://github.com/0Quake/Zero-Quake)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
