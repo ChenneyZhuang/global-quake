@@ -1,4 +1,5 @@
-const CACHE_NAME = 'global-quake-v1'
+const version = new URL(self.location.href).searchParams.get('v') || 'dev'
+const CACHE_NAME = `global-quake-${version}`
 const APP_SHELL = [
   '/',
   '/index.html',

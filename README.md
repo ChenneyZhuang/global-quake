@@ -18,6 +18,7 @@ The project is inspired by earthquake monitoring tools such as kanameishi, JQuak
 - USGS, EMSC, GFZ/GEOFON, GeoNet, and P2PQuake/JMA support
 - Japan live events through P2PQuake WebSocket
 - Magnitude-first map markers with optional depth rings
+- Optional NIED strong-motion monitor panel for Japan sensors
 - TV-style live focus for genuinely new M5.0+ events
 - Historical replay mode for the selected catalog window
 - M5+ audio alerts and local browser notifications
@@ -35,6 +36,7 @@ The project is inspired by earthquake monitoring tools such as kanameishi, JQuak
 | Infinite horizontal panning | Implemented | Wrapped marker copies around world boundaries |
 | Magnitude markers | Implemented | Marker fill color and size prioritize magnitude |
 | Depth rings | Implemented | Optional map layer, disabled by default |
+| Japan sensor monitor | Basic | Optional NIED strong-motion image panel, disabled by default |
 | Live focus mode | Implemented | Auto-fly and broadcast lower-third for genuinely new M5.0+ events |
 | M5+ audio alerts | Implemented | Browser AudioContext, user-enabled |
 | Local notifications | Implemented | Uses browser Notification API while app is open |
@@ -107,6 +109,12 @@ For some USGS events, Global Quake can load a USGS ShakeMap intensity image from
 
 Not every earthquake has a ShakeMap product.
 
+### Japan Sensors Panel
+
+The optional Japan sensors layer shows the latest reachable NIED strong-motion monitor image in a small overlay panel. It is disabled by default to keep the app light and to respect external public infrastructure.
+
+This panel is informational only. Availability depends on the NIED image endpoint, browser network policy, and the user's connection.
+
 ### Japan Live / EEW Boundary
 
 P2PQuake provides near-real-time Japan earthquake information derived from JMA-related public information. Global Quake labels those events as Japan live events.
@@ -122,6 +130,7 @@ This is not a formal Earthquake Early Warning service. The app does not promise 
 | GFZ/GEOFON | Global | FDSN GeoJSON | Independent global seismic catalog |
 | GeoNet | New Zealand | REST GeoJSON | New Zealand regional catalog |
 | P2PQuake/JMA | Japan | WebSocket | Near-real-time Japan events |
+| NIED strong-motion monitor | Japan | Public image endpoint | Optional visual sensor monitor panel |
 
 All data sources are public and do not require an API key. Fair-use behavior matters, so the app polls catalog sources on a conservative cadence.
 
@@ -257,6 +266,7 @@ The catalog can contain hundreds of events. Leaflet Canvas rendering is smoother
 - No guaranteed delivery for audio or local notifications
 - Web Push requires future backend work
 - ShakeMap is only available for events where USGS publishes a product
+- NIED strong-motion images are optional and can be unavailable because of endpoint or browser network restrictions
 - P2PQuake/JMA integration is live earthquake information, not certified EEW
 - External APIs and map tiles require network access
 
@@ -286,6 +296,7 @@ Data sources:
 - [GFZ/GEOFON](https://geofon.gfz-potsdam.de/)
 - [GeoNet](https://www.geonet.org.nz/)
 - [P2PQuake](https://www.p2pquake.net/)
+- [NIED Strong-motion Monitor](https://www.kmoni.bosai.go.jp/)
 
 Map tiles:
 

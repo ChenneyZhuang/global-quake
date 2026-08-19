@@ -43,6 +43,20 @@
       </span>
     </div>
 
+    <section v-if="showStrongMotionLayer" class="strong-motion-panel" :class="{ mobile: isMobile }">
+      <div class="strong-motion-head">
+        <div>
+          <div class="strong-motion-title">NIED Strong-motion Monitor</div>
+          <div class="strong-motion-time">{{ strongMotionStatusLabel }}</div>
+        </div>
+        <button class="strong-motion-close icon-btn" type="button" aria-label="Hide Japan sensors" @click="toggleStrongMotionLayer">x</button>
+      </div>
+      <div class="strong-motion-frame">
+        <img v-if="strongMotionImageUrl" :src="strongMotionImageUrl" alt="NIED realtime seismic intensity monitor">
+        <div v-else class="strong-motion-state">{{ strongMotionStatusLabel }}</div>
+      </div>
+    </section>
+
     <aside
       class="sidebar"
       :aria-hidden="isMobile && !mobileSidebarOpen"
@@ -112,6 +126,17 @@
             >
               <span class="toggle-dot" aria-hidden="true"></span>
               Depth rings
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: showStrongMotionLayer }"
+              :aria-pressed="showStrongMotionLayer"
+              @click="toggleStrongMotionLayer"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              Japan sensors
+              <span class="layer-status">{{ strongMotionStatusLabel }}</span>
             </button>
             <button
               type="button"
@@ -246,7 +271,7 @@
 
     <main ref="mapContainer" class="map-container"></main>
 
-    <section v-if="selectedEvent" class="detail-panel" :class="{ shifted: !sidebarCollapsed && !isMobile }">
+    <section v-if="selectedEvent && !liveFocusEvent" class="detail-panel" :class="{ shifted: !sidebarCollapsed && !isMobile }">
       <button class="detail-close icon-btn" type="button" aria-label="Close event details" @click="selectedEvent = null">x</button>
       <div class="detail-mag" :style="{ color: magColor(selectedEvent.mag) }">M{{ formatMag(selectedEvent.mag) }}</div>
       <div class="detail-place">{{ selectedEvent.place || 'Unknown location' }}</div>
@@ -301,17 +326,27 @@
     <section v-if="liveFocusEvent" class="broadcast-panel" :class="{ shifted: !sidebarCollapsed && !isMobile }">
       <div class="broadcast-kicker">
         <span class="broadcast-live-dot" aria-hidden="true"></span>
-        Live earthquake focus
+        Major earthquake detected
       </div>
       <div class="broadcast-main">
-        <div class="broadcast-mag" :style="{ color: magColor(liveFocusEvent.mag) }">
-          M{{ formatMag(liveFocusEvent.mag) }}
+        <div class="broadcast-mag-stack">
+          <span class="broadcast-mag-label">Magnitude</span>
+          <span class="broadcast-mag" :style="{ color: magColor(liveFocusEvent.mag) }">
+            {{ formatMag(liveFocusEvent.mag) }}
+          </span>
+        </div>
+        <div class="broadcast-intensity">
+          <span class="broadcast-mag-label">Impact</span>
+          <span class="broadcast-intensity-value" :style="{ background: intensityColor(estimatedIntensity(liveFocusEvent)) }">
+            {{ estimatedIntensityLabel(liveFocusEvent) }}
+          </span>
         </div>
         <div class="broadcast-info">
           <div class="broadcast-place">{{ liveFocusEvent.place || 'Unknown location' }}</div>
+          <div class="broadcast-message">{{ liveFocusMessage(liveFocusEvent) }}</div>
           <div class="broadcast-meta">
             <span>{{ formatEventTime(liveFocusEvent.time) }}</span>
-            <span>{{ liveFocusEvent.depth?.toFixed(1) || '?' }} km</span>
+            <span>{{ liveFocusEvent.depth?.toFixed(1) || '?' }} km deep</span>
             <span>{{ liveFocusEvent.source || 'Unknown source' }}</span>
           </div>
         </div>
@@ -407,6 +442,10 @@ const lastUpdate = ref('-')
 const connected = ref(false)
 const loadingData = ref(false)
 const showDepthRings = ref(false)
+const showStrongMotionLayer = ref(false)
+const strongMotionStatus = ref('idle')
+const strongMotionTimestamp = ref('')
+const strongMotionImageUrl = ref('')
 const audioAlertsEnabled = ref(false)
 const liveFocusEnabled = ref(true)
 const desktopNotificationsEnabled = ref(false)
@@ -431,11 +470,21 @@ const liveFocusEvent = ref(null)
 
 let map = null
 let markerLayer = null
+let effectLayer = null
+let epicenterEffectMarker = null
+let strongMotionTimer = null
+let strongMotionLastUrl = ''
+let strongMotionPreferredDelayMs = 30_000
+let pWaveCircle = null
+let sWaveCircle = null
+let seismicWaveTimer = null
 let mapRenderer = null
 let resizeObserver = null
 let pollTimer = null
 let p2pSocket = null
+let p2pReconnectTimer = null
 let lastFetchTime = 0
+let loadRequestId = 0
 let initialLoadDone = false
 let suppressNextFreshAlerts = false
 let knownIds = new Set()
@@ -451,6 +500,11 @@ const CATALOG_POLL_MS = 60_000
 const ALERT_EVENT_MAX_AGE_MS = 15 * 60 * 1000
 const ALERT_DISPLAY_MS = 15_000
 const NEW_MARKER_MS = 30_000
+const STRONG_MOTION_POLL_MS = 4_000
+const KMONI_IMAGE_TIMEOUT_MS = 3_500
+const KMONI_BASE = 'https://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/jma_s'
+const P_WAVE_KM_PER_SEC = 6.0
+const S_WAVE_KM_PER_SEC = 3.5
 
 const selectedFeed = computed(() => catalogWindows.find(feed => feed.key === currentFeed.value) || catalogWindows[1])
 const selectedFeedLabel = computed(() => selectedFeed.value.label)
@@ -498,6 +552,13 @@ const activeSourceText = computed(() => {
   return labels.length ? labels.join(' + ') : 'No sources'
 })
 const sourceStatusLabel = computed(() => activeSourceText.value)
+const strongMotionStatusLabel = computed(() => {
+  if (!showStrongMotionLayer.value) return 'off'
+  if (strongMotionStatus.value === 'live') return strongMotionTimestamp.value || 'live'
+  if (strongMotionStatus.value === 'loading') return 'loading'
+  if (strongMotionStatus.value === 'unavailable') return 'unavailable'
+  return 'standby'
+})
 
 function magColor(mag) {
   if (mag == null || mag < 0 || Number.isNaN(Number(mag))) return '#666'
@@ -522,6 +583,43 @@ function mmiColor(mmi) {
   if (mmi >= 3) return '#88cc00'
   if (mmi >= 2) return '#44aa44'
   return '#2288cc'
+}
+
+function intensityColor(intensity) {
+  if (intensity == null) return '#667085'
+  if (intensity >= 7) return '#b000b8'
+  if (intensity >= 6) return '#e51b23'
+  if (intensity >= 5) return '#ff7a00'
+  if (intensity >= 4) return '#ffd23f'
+  if (intensity >= 3) return '#51c878'
+  if (intensity >= 2) return '#35a9d8'
+  return '#8a95a6'
+}
+
+function estimatedIntensity(eq) {
+  if (eq?.mmi != null && Number.isFinite(Number(eq.mmi))) return Math.max(1, Math.min(10, Math.round(eq.mmi)))
+  const mag = Number(eq?.mag)
+  if (!Number.isFinite(mag)) return null
+  if (mag >= 7.5) return 7
+  if (mag >= 7) return 6
+  if (mag >= 6.5) return 5
+  if (mag >= 6) return 4
+  if (mag >= 5.5) return 3
+  if (mag >= 5) return 2
+  return 1
+}
+
+function estimatedIntensityLabel(eq) {
+  const intensity = estimatedIntensity(eq)
+  if (intensity == null) return '?'
+  return eq?.mmi != null ? romanMmi(intensity) : `${intensity}`
+}
+
+function liveFocusMessage(eq) {
+  if (eq?.tsunami) return 'Tsunami flag present. Follow official emergency guidance.'
+  if ((eq?.mag ?? 0) >= 7) return 'Strong shaking is possible near the epicenter. Stay alert and check official updates.'
+  if ((eq?.mag ?? 0) >= 6) return 'Potentially damaging earthquake. Review nearby conditions and official bulletins.'
+  return 'Fresh M5+ earthquake. Monitor updates and be prepared for aftershocks.'
 }
 
 function romanMmi(mmi) {
@@ -596,6 +694,7 @@ function initMap() {
 
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   markerLayer = L.layerGroup().addTo(map)
+  effectLayer = L.layerGroup().addTo(map)
   mapRenderer = L.canvas({ padding: 0.5 })
 
   map.setMinZoom(1)
@@ -691,6 +790,112 @@ function markerNeutralStroke(mag) {
 function toggleDepthRings() {
   showDepthRings.value = !showDepthRings.value
   nextTick().then(renderMarkers)
+}
+
+function toggleStrongMotionLayer() {
+  showStrongMotionLayer.value = !showStrongMotionLayer.value
+  if (showStrongMotionLayer.value) {
+    startStrongMotionMonitor()
+  } else {
+    stopStrongMotionMonitor()
+  }
+}
+
+function startStrongMotionMonitor() {
+  if (!map || strongMotionTimer) return
+  updateStrongMotionImage()
+  strongMotionTimer = setInterval(updateStrongMotionImage, STRONG_MOTION_POLL_MS)
+}
+
+function stopStrongMotionMonitor() {
+  if (strongMotionTimer) {
+    clearInterval(strongMotionTimer)
+    strongMotionTimer = null
+  }
+  strongMotionImageUrl.value = ''
+  strongMotionLastUrl = ''
+  strongMotionStatus.value = 'idle'
+  strongMotionTimestamp.value = ''
+}
+
+async function updateStrongMotionImage() {
+  if (!map || !showStrongMotionLayer.value) return
+  strongMotionStatus.value = strongMotionImageUrl.value ? 'live' : 'loading'
+  const delays = uniqueDelays([
+    strongMotionPreferredDelayMs,
+    8_000,
+    15_000,
+    30_000,
+    45_000,
+    60_000,
+    90_000,
+  ])
+
+  for (const delay of delays) {
+    const timestamp = kmoniTimestamp(Date.now() - delay)
+    const url = kmoniRealtimeIntensityUrl(timestamp)
+    if (url === strongMotionLastUrl) {
+      strongMotionStatus.value = 'live'
+      return
+    }
+    const ok = await preloadImage(url, KMONI_IMAGE_TIMEOUT_MS)
+    if (!ok || !showStrongMotionLayer.value) continue
+    strongMotionPreferredDelayMs = delay
+    setStrongMotionImage(url, timestamp)
+    return
+  }
+
+  strongMotionStatus.value = strongMotionImageUrl.value ? 'live' : 'unavailable'
+}
+
+function setStrongMotionImage(url, timestamp) {
+  strongMotionImageUrl.value = url
+  strongMotionLastUrl = url
+  strongMotionTimestamp.value = formatKmoniDisplayTime(timestamp)
+  strongMotionStatus.value = 'live'
+}
+
+function uniqueDelays(delays) {
+  return [...new Set(delays.filter(delay => Number.isFinite(delay) && delay > 0))]
+}
+
+function kmoniRealtimeIntensityUrl(timestamp) {
+  return `${KMONI_BASE}/${timestamp.slice(0, 8)}/${timestamp}.jma_s.gif`
+}
+
+function kmoniTimestamp(ms) {
+  const date = new Date(ms + 9 * 60 * 60 * 1000)
+  const pad = value => String(value).padStart(2, '0')
+  return [
+    date.getUTCFullYear(),
+    pad(date.getUTCMonth() + 1),
+    pad(date.getUTCDate()),
+    pad(date.getUTCHours()),
+    pad(date.getUTCMinutes()),
+    pad(date.getUTCSeconds()),
+  ].join('')
+}
+
+function formatKmoniDisplayTime(timestamp) {
+  if (!timestamp || timestamp.length !== 14) return 'live'
+  return `${timestamp.slice(8, 10)}:${timestamp.slice(10, 12)}:${timestamp.slice(12, 14)} JST`
+}
+
+function preloadImage(url, timeoutMs) {
+  return new Promise((resolve) => {
+    const image = new Image()
+    let settled = false
+    const finish = value => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    image.onload = () => finish(true)
+    image.onerror = () => finish(false)
+    image.src = url
+  })
 }
 
 function toggleTimeMode() {
@@ -835,6 +1040,24 @@ function sendFreshEventNotification(items) {
     window.focus()
     focusEvent(event)
     notification.close()
+  }
+}
+
+function speakFreshEventAlert(event) {
+  if (!audioAlertsEnabled.value || !('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) return
+  const mag = formatMag(event.mag)
+  const place = event.place || 'unknown location'
+  const text = `检测到强震。震级 ${mag}，位置 ${place}。请注意安全，并以官方信息为准。`
+  try {
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'zh-CN'
+    utterance.rate = 0.95
+    utterance.pitch = 0.92
+    utterance.volume = 0.9
+    window.speechSynthesis.speak(utterance)
+  } catch {
+    // Speech synthesis is best-effort; visual and tone alerts still run.
   }
 }
 
@@ -1006,11 +1229,93 @@ function focusEvent(eq, options = {}) {
   if (isMobile.value) mobileSidebarOpen.value = false
   const mag = Number.isFinite(eq.mag) ? eq.mag : 3
   const openPopup = () => L.popup({ maxWidth: 300 }).setLatLng([eq.lat, eq.lng]).setContent(popupContentFor(eq)).openOn(map)
-  map.once('moveend', () => nextTick().then(openPopup))
+  if (options.popup !== false) map.once('moveend', () => nextTick().then(openPopup))
   const zoom = options.zoom ?? Math.max(6, 8 - mag * 0.4)
   const duration = options.duration ?? 1
   map.flyTo([eq.lat, eq.lng], zoom, { duration })
-  setTimeout(openPopup, Math.round(duration * 1000) + 300)
+  if (options.popup !== false) setTimeout(openPopup, Math.round(duration * 1000) + 300)
+}
+
+function renderEpicenterEffect(eq) {
+  if (!effectLayer || eq?.lat == null || eq?.lng == null) return
+  clearEpicenterEffect()
+  const icon = L.divIcon({
+    className: 'quake-wave-icon',
+    html: `
+      <span class="quake-wave-ring ring-one"></span>
+      <span class="quake-wave-ring ring-two"></span>
+      <span class="quake-wave-ring ring-three"></span>
+      <span class="quake-wave-core"></span>
+    `,
+    iconSize: [260, 260],
+    iconAnchor: [130, 130],
+  })
+  epicenterEffectMarker = L.marker([eq.lat, eq.lng], {
+    icon,
+    interactive: false,
+    keyboard: false,
+    zIndexOffset: 1200,
+  }).addTo(effectLayer)
+  renderSeismicWavefronts(eq)
+  seismicWaveTimer = setInterval(() => renderSeismicWavefronts(eq), 1000)
+}
+
+function clearEpicenterEffect() {
+  if (epicenterEffectMarker && effectLayer) {
+    effectLayer.removeLayer(epicenterEffectMarker)
+  }
+  epicenterEffectMarker = null
+  clearSeismicWavefronts()
+}
+
+function renderSeismicWavefronts(eq) {
+  if (!effectLayer || eq?.lat == null || eq?.lng == null || !Number.isFinite(eq.time)) return
+  const elapsedSeconds = Math.max(0, (Date.now() - eq.time) / 1000)
+  const pRadius = Math.min(3_200_000, elapsedSeconds * P_WAVE_KM_PER_SEC * 1000)
+  const sRadius = Math.min(2_200_000, elapsedSeconds * S_WAVE_KM_PER_SEC * 1000)
+  const latLng = [eq.lat, eq.lng]
+
+  if (!pWaveCircle) {
+    pWaveCircle = L.circle(latLng, {
+      radius: pRadius,
+      color: '#6edcff',
+      weight: 2,
+      opacity: 0.82,
+      fill: false,
+      interactive: false,
+      dashArray: '8 7',
+      className: 'seismic-wave seismic-wave-p',
+    }).addTo(effectLayer)
+  } else {
+    pWaveCircle.setLatLng(latLng)
+    pWaveCircle.setRadius(pRadius)
+  }
+
+  if (!sWaveCircle) {
+    sWaveCircle = L.circle(latLng, {
+      radius: sRadius,
+      color: '#ff9b22',
+      weight: 3,
+      opacity: 0.9,
+      fill: false,
+      interactive: false,
+      className: 'seismic-wave seismic-wave-s',
+    }).addTo(effectLayer)
+  } else {
+    sWaveCircle.setLatLng(latLng)
+    sWaveCircle.setRadius(sRadius)
+  }
+}
+
+function clearSeismicWavefronts() {
+  if (seismicWaveTimer) {
+    clearInterval(seismicWaveTimer)
+    seismicWaveTimer = null
+  }
+  if (pWaveCircle && effectLayer) effectLayer.removeLayer(pWaveCircle)
+  if (sWaveCircle && effectLayer) effectLayer.removeLayer(sWaveCircle)
+  pWaveCircle = null
+  sWaveCircle = null
 }
 
 function convertJmaScale(scale) {
@@ -1058,17 +1363,21 @@ function triggerLiveFocus(items) {
 
   const mag = Number.isFinite(event.mag) ? event.mag : 5
   const zoom = Math.max(5.8, Math.min(7.4, 8.15 - mag * 0.18))
-  focusEvent(event, { zoom, duration: 1.35 })
+  focusEvent(event, { zoom, duration: 1.35, popup: false })
+  renderEpicenterEffect(event)
+  speakFreshEventAlert(event)
   nextTick().then(renderMarkers)
 
   liveFocusTimer = setTimeout(() => {
     liveFocusEvent.value = null
+    clearEpicenterEffect()
     liveFocusTimer = null
   }, 45_000)
 }
 
 function clearLiveFocus() {
   liveFocusEvent.value = null
+  clearEpicenterEffect()
   if (liveFocusTimer) {
     clearTimeout(liveFocusTimer)
     liveFocusTimer = null
@@ -1078,13 +1387,18 @@ function clearLiveFocus() {
 async function loadData() {
   const now = Date.now()
   if (now - lastFetchTime < CATALOG_POLL_MS) return
+  const requestId = ++loadRequestId
+  const feed = currentFeed.value
+  const sourceKeys = [...selectedSources.value]
 
   try {
     connected.value = true
     loadingData.value = true
     lastFetchTime = now
 
-    const catalogEvents = await fetchCatalogEvents(currentFeed.value)
+    const catalogEvents = await fetchCatalogEvents(feed, sourceKeys)
+    if (requestId !== loadRequestId) return
+
     const seen = new Set()
     const merged = []
     const fresh = []
@@ -1100,7 +1414,7 @@ async function loadData() {
     }
 
     for (const eq of events.value) {
-      if (eq.source === 'JMA' && selectedSources.value.includes('jma') && !seen.has(eq.id)) merged.push(eq)
+      if (eq.source === 'JMA' && sourceKeys.includes('jma') && !seen.has(eq.id)) merged.push(eq)
     }
 
     events.value = merged
@@ -1113,20 +1427,23 @@ async function loadData() {
     await nextTick()
     renderMarkers()
   } catch (err) {
+    if (requestId !== loadRequestId) return
     console.error('Failed to fetch earthquake data:', err)
     connected.value = false
   } finally {
-    loadingData.value = false
+    if (requestId === loadRequestId) loadingData.value = false
   }
 }
 
-async function fetchCatalogEvents(feed) {
-  const cacheKey = `${feed}|${selectedSources.value.filter(source => source !== 'jma').sort().join(',')}`
+async function fetchCatalogEvents(feed, sourceKeys = selectedSources.value) {
+  const sourceSet = new Set(sourceKeys)
+  const windowHours = hoursForFeed(feed)
+  const cacheKey = `${feed}|${sourceKeys.filter(source => source !== 'jma').sort().join(',')}`
   const cached = feedCache.get(cacheKey)
   if (cached && Date.now() - cached.time < FEED_CACHE_MS) return cached.events
 
   const tasks = []
-  if (selectedSources.value.includes('usgs')) {
+  if (sourceSet.has('usgs')) {
     tasks.push(fetchUSGS(feed)
       .then(data => (data.features || []).map(feature => normalizeEvent(feature, 'usgs')))
       .catch(err => {
@@ -1134,8 +1451,8 @@ async function fetchCatalogEvents(feed) {
         return []
       }))
   }
-  if (selectedSources.value.includes('emsc')) {
-    const start = new Date(Date.now() - selectedFeed.value.hours * 60 * 60 * 1000).toISOString()
+  if (sourceSet.has('emsc')) {
+    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
     tasks.push(fetchEMSC({ start, minmag: fdsnMinMag(feed), limit: sourceLimit(feed) })
       .then(features => (features || []).map(feature => normalizeEvent(feature, 'emsc')))
       .catch(err => {
@@ -1143,8 +1460,8 @@ async function fetchCatalogEvents(feed) {
         return []
       }))
   }
-  if (selectedSources.value.includes('gfz')) {
-    const start = new Date(Date.now() - selectedFeed.value.hours * 60 * 60 * 1000).toISOString()
+  if (sourceSet.has('gfz')) {
+    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
     tasks.push(fetchGFZ({ start, minmag: fdsnMinMag(feed), limit: sourceLimit(feed) })
       .then(features => (features || []).map(feature => normalizeEvent(feature, 'gfz')))
       .catch(err => {
@@ -1152,8 +1469,8 @@ async function fetchCatalogEvents(feed) {
         return []
       }))
   }
-  if (selectedSources.value.includes('geonet')) {
-    const start = new Date(Date.now() - selectedFeed.value.hours * 60 * 60 * 1000).toISOString()
+  if (sourceSet.has('geonet')) {
+    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
     tasks.push(fetchGeoNet({ start, limit: feed === 'all_week' ? 350 : 180 })
       .then(features => (features || []).map(feature => normalizeEvent(feature, 'geonet')))
       .catch(err => {
@@ -1165,6 +1482,10 @@ async function fetchCatalogEvents(feed) {
   const merged = dedupeEvents((await Promise.all(tasks)).flat())
   feedCache.set(cacheKey, { time: Date.now(), events: merged })
   return merged
+}
+
+function hoursForFeed(feed) {
+  return (catalogWindows.find(item => item.key === feed) || catalogWindows[1]).hours
 }
 
 function fdsnMinMag(feed) {
@@ -1206,6 +1527,10 @@ function mergeSourceLabel(a, b) {
 
 function connectP2PQuake() {
   if (p2pSocket) return
+  if (p2pReconnectTimer) {
+    clearTimeout(p2pReconnectTimer)
+    p2pReconnectTimer = null
+  }
   try {
     p2pSocket = new WebSocket(P2PQUAKE_WS)
     p2pSocket.onopen = () => { p2pConnected.value = true }
@@ -1242,10 +1567,16 @@ function connectP2PQuake() {
     p2pSocket.onclose = () => {
       p2pConnected.value = false
       p2pSocket = null
-      setTimeout(connectP2PQuake, 10_000)
+      if (!p2pReconnectTimer) {
+        p2pReconnectTimer = setTimeout(() => {
+          p2pReconnectTimer = null
+          connectP2PQuake()
+        }, 10_000)
+      }
     }
     p2pSocket.onerror = () => p2pSocket?.close()
   } catch {
+    p2pConnected.value = false
     // WebSocket not available in this browser.
   }
 }
@@ -1286,26 +1617,63 @@ function resetView() {
   map.setView([20, 0], 2, { animate: true })
 }
 
+function isLocalPreviewHost() {
+  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+}
+
+function triggerDemoMajorAlert() {
+  const event = {
+    id: `demo-major-${Date.now()}`,
+    lat: 38.32,
+    lng: 142.37,
+    depth: 24,
+    mag: 6.6,
+    place: 'off the east coast of Honshu, Japan',
+    time: Date.now(),
+    source: 'Demo',
+    mmi: 5,
+    tsunami: 0,
+  }
+  knownIds.add(event.id)
+  events.value = [event, ...events.value.filter(eq => eq.id !== event.id)]
+  lastUpdate.value = new Date().toLocaleTimeString()
+  pushNewAlerts([event])
+  nextTick().then(renderMarkers)
+}
+
 onMounted(() => {
   checkMobile()
   initMap()
   loadData()
   connectP2PQuake()
+  if (showStrongMotionLayer.value) startStrongMotionMonitor()
   pollTimer = setInterval(loadData, CATALOG_POLL_MS)
   window.addEventListener('resize', checkMobile)
+  if (isLocalPreviewHost()) {
+    window.__GLOBAL_QUAKE_TEST__ = {
+      triggerMajorAlert: triggerDemoMajorAlert,
+    }
+    if (new URLSearchParams(window.location.search).has('demoAlert')) {
+      setTimeout(triggerDemoMajorAlert, 1200)
+    }
+  }
 })
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer)
   if (resizeObserver) resizeObserver.disconnect()
+  if (p2pReconnectTimer) clearTimeout(p2pReconnectTimer)
   if (p2pSocket) {
     p2pSocket.onclose = null
     p2pSocket.close()
   }
+  stopStrongMotionMonitor()
   if (audioContext) audioContext.close()
   if (liveFocusTimer) clearTimeout(liveFocusTimer)
+  clearEpicenterEffect()
   alertTimers.forEach(clearTimeout)
   window.removeEventListener('resize', checkMobile)
+  if (isLocalPreviewHost()) delete window.__GLOBAL_QUAKE_TEST__
 })
 </script>
 
@@ -1467,6 +1835,65 @@ onBeforeUnmount(() => {
   from { transform: translateY(-100%); }
   to { transform: translateY(0); }
 }
+.strong-motion-panel {
+  position: absolute;
+  top: 58px;
+  right: 12px;
+  z-index: 1001;
+  width: 300px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(11,14,24,0.94);
+  box-shadow: 0 16px 42px rgba(0,0,0,0.44);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.strong-motion-head {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.strong-motion-title {
+  color: #eef3ff;
+  font-size: 12px;
+  font-weight: 820;
+}
+.strong-motion-time {
+  margin-top: 2px;
+  color: #8fe7ff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.strong-motion-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.08);
+  color: #cbd3e3;
+  cursor: pointer;
+}
+.strong-motion-frame {
+  min-height: 182px;
+  display: grid;
+  place-items: center;
+  background: #05070d;
+}
+.strong-motion-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.strong-motion-state {
+  padding: 24px;
+  color: #8f98aa;
+  font-size: 12px;
+}
 .sidebar {
   position: absolute;
   top: 46px;
@@ -1588,6 +2015,16 @@ onBeforeUnmount(() => {
   color: #cbd3e3;
   font-size: 12px;
   cursor: pointer;
+}
+.layer-status {
+  margin-left: auto;
+  color: #8f98aa;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.layer-toggle.active .layer-status {
+  color: #8fe7ff;
 }
 .layer-toggle.active {
   color: #8fe7ff;
@@ -1832,17 +2269,17 @@ onBeforeUnmount(() => {
   right: 18px;
   bottom: 26px;
   z-index: 1002;
-  min-height: 92px;
+  min-height: 118px;
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 8px;
-  padding: 13px 48px 13px 14px;
+  gap: 10px;
+  padding: 14px 50px 14px 14px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 68, 68, 0.42);
+  border: 1px solid rgba(255, 136, 0, 0.5);
   background:
-    linear-gradient(90deg, rgba(110, 12, 12, 0.96), rgba(23, 26, 42, 0.96) 46%, rgba(15, 18, 31, 0.92)),
+    linear-gradient(90deg, rgba(72, 24, 5, 0.98), rgba(23, 26, 42, 0.97) 42%, rgba(15, 18, 31, 0.94)),
     rgba(15,18,31,0.96);
-  box-shadow: 0 18px 46px rgba(0,0,0,0.48), inset 4px 0 0 rgba(255,68,68,0.92);
+  box-shadow: 0 18px 46px rgba(0,0,0,0.52), inset 5px 0 0 rgba(255,136,0,0.94);
   backdrop-filter: blur(16px);
   animation: broadcastIn 0.28s ease;
 }
@@ -1856,33 +2293,66 @@ onBeforeUnmount(() => {
   width: fit-content;
   padding: 3px 8px;
   border-radius: 5px;
-  background: rgba(255,68,68,0.2);
-  color: #ffdddd;
+  background: rgba(255,136,0,0.2);
+  color: #ffe0b0;
   font-size: 11px;
   font-weight: 850;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 .broadcast-live-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ff4444;
-  box-shadow: 0 0 12px rgba(255,68,68,0.85);
+  background: #ff9b22;
+  box-shadow: 0 0 12px rgba(255,136,0,0.85);
   animation: livePulse 1s ease-in-out infinite;
 }
 .broadcast-main {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
+.broadcast-mag-stack,
+.broadcast-intensity {
+  flex: 0 0 auto;
+  min-width: 92px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  justify-items: center;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.08);
+}
+.broadcast-mag-label {
+  color: #aeb8ca;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
 .broadcast-mag {
-  min-width: 86px;
-  font-size: 44px;
+  font-size: 42px;
   line-height: 0.95;
   font-weight: 900;
   text-shadow: 0 2px 16px rgba(0,0,0,0.5);
+}
+.broadcast-intensity {
+  min-width: 78px;
+}
+.broadcast-intensity-value {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: #111827;
+  font-size: 30px;
+  font-weight: 900;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.16);
 }
 .broadcast-info {
   min-width: 0;
@@ -1892,8 +2362,14 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #fff;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 820;
+}
+.broadcast-message {
+  margin-top: 5px;
+  color: #ffe0b0;
+  font-size: 13px;
+  line-height: 1.35;
 }
 .broadcast-meta {
   display: flex;
@@ -2038,9 +2514,63 @@ onBeforeUnmount(() => {
 .leaflet-marker-pane .marker-new {
   animation: markerGlow 1.5s ease-in-out infinite;
 }
+.seismic-wave {
+  filter: drop-shadow(0 0 8px currentColor);
+}
+.quake-wave-icon {
+  pointer-events: none;
+}
+.quake-wave-ring,
+.quake-wave-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.quake-wave-ring {
+  width: 36px;
+  height: 36px;
+  border: 4px solid rgba(255, 136, 0, 0.88);
+  box-shadow: 0 0 20px rgba(255, 136, 0, 0.48);
+  animation: quakeWave 3.2s ease-out infinite;
+}
+.quake-wave-ring.ring-two {
+  animation-delay: 0.72s;
+  border-color: rgba(255, 194, 61, 0.72);
+}
+.quake-wave-ring.ring-three {
+  animation-delay: 1.44s;
+  border-color: rgba(255, 68, 68, 0.68);
+}
+.quake-wave-core {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #fff6d8;
+  background: #ff3b2f;
+  box-shadow: 0 0 18px rgba(255, 59, 47, 0.95), 0 0 34px rgba(255, 136, 0, 0.65);
+  animation: epicenterPulse 0.82s ease-in-out infinite;
+}
 @keyframes markerGlow {
   0%, 100% { filter: drop-shadow(0 0 4px #ffcc00); }
   50% { filter: drop-shadow(0 0 12px #ff6600); }
+}
+@keyframes quakeWave {
+  0% {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(0.18);
+  }
+  72% {
+    opacity: 0.42;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(6.8);
+  }
+}
+@keyframes epicenterPulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.92); }
+  50% { transform: translate(-50%, -50%) scale(1.18); }
 }
 .leaflet-popup-content-wrapper {
   background: #1e1e36 !important;
@@ -2147,6 +2677,7 @@ onBeforeUnmount(() => {
   .sidebar.collapsed { width: 0; }
   .sidebar-backdrop {
     display: block;
+    left: min(92vw, 360px);
     z-index: 1001;
   }
   .sidebar-header {
@@ -2191,6 +2722,28 @@ onBeforeUnmount(() => {
     min-width: 42px;
     height: 42px;
   }
+  .strong-motion-panel.mobile {
+    top: 56px;
+    right: 8px;
+    width: min(46vw, 184px);
+  }
+  .strong-motion-head {
+    min-height: 34px;
+    padding: 6px 7px;
+  }
+  .strong-motion-title {
+    font-size: 10px;
+  }
+  .strong-motion-time {
+    font-size: 9px;
+  }
+  .strong-motion-close {
+    width: 26px;
+    height: 26px;
+  }
+  .strong-motion-frame {
+    min-height: 108px;
+  }
   .alert-bar {
     top: 50px;
     left: 0;
@@ -2215,18 +2768,38 @@ onBeforeUnmount(() => {
     left: 8px;
     right: 8px;
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 6px);
-    min-height: 86px;
+    min-height: 116px;
+    max-height: calc(100dvh - 24px);
+    overflow: hidden;
     padding: 10px 42px 10px 10px;
   }
   .broadcast-main {
     gap: 9px;
   }
+  .broadcast-mag-stack,
+  .broadcast-intensity {
+    min-width: 58px;
+    padding: 7px 6px;
+  }
+  .broadcast-mag-label {
+    font-size: 9px;
+  }
   .broadcast-mag {
-    min-width: 62px;
-    font-size: 32px;
+    font-size: 30px;
+  }
+  .broadcast-intensity {
+    min-width: 52px;
+  }
+  .broadcast-intensity-value {
+    min-width: 34px;
+    min-height: 34px;
+    font-size: 22px;
   }
   .broadcast-place {
     font-size: 15px;
+  }
+  .broadcast-message {
+    font-size: 11px;
   }
   .broadcast-meta {
     gap: 5px;
