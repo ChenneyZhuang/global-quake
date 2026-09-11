@@ -39,10 +39,15 @@ export const USGS_FEEDS = {
 
 // --- EMSC (European-Mediterranean Seismological Centre) ---
 // Free FDSN event API: https://www.seismicportal.eu/fdsnws/event/1/
+// format=json returns a GeoJSON FeatureCollection — EMSC does NOT support
+// format=geojson (it answers "unknown format requested").
 const EMSC_BASE = 'https://www.seismicportal.eu/fdsnws/event/1/query'
 
 // --- GFZ/GEOFON (German Research Centre for Geosciences) ---
-// Free FDSN event API with GeoJSON output.
+// Free FDSN event API. NOTE: GFZ's FDSNWS event service does NOT support
+// format=json or format=geojson — both return "Error 400: invalid value in
+// parameter: format". Only text / csv / xml work, so we request the pipe-
+// delimited text table and parse it client-side.
 const GFZ_BASE = 'https://geofon.gfz-potsdam.de/fdsnws/event/1/query'
 
 // --- GeoNet New Zealand ---
@@ -50,7 +55,7 @@ const GFZ_BASE = 'https://geofon.gfz-potsdam.de/fdsnws/event/1/query'
 const GEONET_QUAKE = 'https://api.geonet.org.nz/quake'
 
 /**
- * Build EMSC query URL.
+ * Build EMSC FDSN query URL.
  * @param {Object} opts
  * @param {number} [opts.limit=200]
  * @param {number} [opts.minmag=2.5]
@@ -70,16 +75,59 @@ export function emscUrl(opts = {}) {
   return `${EMSC_BASE}?${params}`
 }
 
-export function fdsnGeoJsonUrl(base, opts = {}) {
+/**
+ * Build GFZ FDSN query URL. Uses format=text because GFZ rejects json/geojson.
+ */
+export function gfzTextUrl(opts = {}) {
   const params = new URLSearchParams({
-    format: 'geojson',
+    format: 'text',
     limit: String(opts.limit || 200),
     minmag: String(opts.minmag || 2.5),
     orderby: 'time',
   })
   if (opts.start) params.set('starttime', opts.start)
   if (opts.end) params.set('endtime', opts.end)
-  return `${base}?${params}`
+  return `${GFZ_BASE}?${params}`
+}
+
+/**
+ * Parse the GFZ FDSN text table (pipe-delimited, header row prefixed with #)
+ * into GeoJSON-like features so normalizeEvent() can treat them like any other
+ * source.
+ *
+ * Real payload:
+ *   #EventID|Time|Latitude|Longitude|Depth/km|Author|Catalog|Contributor|...
+ *   gfz2026rsyb|2026-09-10T06:42:41.37|-3.888|-77.561|10.0|||GFZ|...|Mw|5.29||Peru-Ecuador Border Region|earthquake
+ */
+export function parseGfzText(text) {
+  const lines = String(text || '').split(/\r?\n/).filter(line => line.trim() && !line.startsWith('#'))
+  const features = []
+  for (const line of lines) {
+    const cols = line.split('|')
+    if (cols.length < 14) continue
+    const lat = Number(cols[2])
+    const lng = Number(cols[3])
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+    features.push({
+      type: 'feature',
+      id: cols[0] || null,
+      geometry: {
+        type: 'Point',
+        coordinates: [lng, lat, Number(cols[4]) || 0],
+      },
+      properties: {
+        mag: Number(cols[10]) || null,
+        magtype: cols[9] || null,
+        place: cols[12] || 'GFZ event',
+        time: cols[1] || null,
+        type: cols[13] || 'earthquake',
+        // GEOFON has no readable per-event web page (eventinfo.php 404s),
+        // so the FDSN eventid query is the closest per-event link.
+        url: cols[0] ? `${GFZ_BASE}?eventid=${encodeURIComponent(cols[0])}&format=text` : null,
+      },
+    })
+  }
+  return features
 }
 
 // --- P2PQuake (Japanese community, free) ---
@@ -87,6 +135,46 @@ export function fdsnGeoJsonUrl(base, opts = {}) {
 // Docs: https://www.p2pquake.net/develop/json_api_v2/
 export const P2PQUAKE_WS = 'wss://api.p2pquake.net/v2/ws'
 export const P2PQUAKE_HISTORY = 'https://api.p2pquake.net/v2/history'
+
+// P2PQuake message codes we consume. 551 is the hypocentre bulletin;
+// 556 is the (non-certified) earthquake early-warning bulletin and carries a
+// per-prefecture intensity/arrival-time table, which 551 does not.
+export const P2P_QUAKE_MSG = {
+  EARTHQUAKE: 551,
+  EARLY_WARNING: 556,
+}
+
+/**
+ * Convert a JMA intensity scale (0, 10, 20, 30, 35, 40, 45, 50, 55, 60, 65)
+ * into an English label plus the legacy MMI mapping used elsewhere in the app.
+ *
+ * The old implementation did `ceil(scale / 10)`, which collapsed 25/30/35
+ * into the same "3" and threw away the JMA half-steps (弱, やや強い,
+ * かなり強い, 激しく) — the distinction that actually matters for shaking.
+ * @param {number|null} scale - JMA scale value, e.g. 30 or 50
+ * @returns {{ mmi: number|null, label: string }}
+ */
+export function jmaScaleToIntensity(scale) {
+  if (scale == null || scale < 0 || Number.isNaN(Number(scale))) return { mmi: null, label: '' }
+  const s = Number(scale)
+  const table = [
+    { max: 14, label: 'Barely felt', mmi: 2 },
+    { max: 19, label: 'Weak', mmi: 3 },
+    { max: 24, label: 'Barely strong', mmi: 3 },
+    { max: 29, label: 'Weakly strong', mmi: 3 },
+    { max: 34, label: 'Quite strong', mmi: 4 },
+    { max: 39, label: 'Strong', mmi: 4 },
+    { max: 44, label: 'Very strong', mmi: 5 },
+    { max: 49, label: 'Very strong', mmi: 5 },
+    { max: 54, label: 'Fiercely strong', mmi: 6 },
+    { max: 59, label: 'Fiercely strong', mmi: 6 },
+    { max: 64, label: 'Violently strong', mmi: 7 },
+  ]
+  for (const entry of table) {
+    if (s <= entry.max) return { mmi: entry.mmi, label: entry.label }
+  }
+  return { mmi: 8, label: 'Violently strong' }
+}
 
 // --- Data fetcher ---
 
@@ -112,15 +200,36 @@ export async function fetchEMSC(opts = {}) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`EMSC ${res.status}`)
   const data = await res.json()
-  return data.features || data
+  const features = data.features || []
+  // EMSC does not return a public detail page per event (both
+  // /event/{id} and emsc-csem.org/event/{id} return 404), but the FDSN
+  // query endpoint accepts an eventid filter. That is the closest thing to
+  // a per-event page, so we synthesise it — otherwise the popup's
+  // "Source detail" link is silently missing for every EMSC event.
+  return features.map(feature => {
+    const id = feature.id || feature.properties?.event_id || feature.properties?.source_id
+    return id
+      ? { ...feature, properties: { ...feature.properties, url: `${EMSC_BASE}?eventid=${encodeURIComponent(id)}&format=text` } }
+      : feature
+  })
 }
 
+/**
+ * Fetch GFZ/GEOFON events. GFZ rejects format=json and format=geojson, so we
+ * request format=text and parse the pipe-delimited table.
+ * @param {Object} [opts]
+ * @returns {Promise<Array>} GeoJSON-like features
+ */
 export async function fetchGFZ(opts = {}) {
-  const url = fdsnGeoJsonUrl(GFZ_BASE, opts)
+  const url = gfzTextUrl(opts)
   const res = await fetch(url)
   if (!res.ok) throw new Error(`GFZ ${res.status}`)
-  const data = await res.json()
-  return data.features || data
+  const text = await res.text()
+  if (/^Error\b/.test(text.trim())) {
+    // FDSNWS answers "Error 400: ..." as plain text, not JSON.
+    throw new Error(`GFZ ${text.trim().split('\n')[0].slice(0, 90)}`)
+  }
+  return parseGfzText(text)
 }
 
 export async function fetchGeoNet(opts = {}) {

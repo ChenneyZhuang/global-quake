@@ -106,8 +106,13 @@
               :key="source.key"
               type="button"
               class="source-toggle"
-              :class="{ active: selectedSources.includes(source.key) }"
+              :class="{
+                active: selectedSources.includes(source.key),
+                'source-error': sourceHealth[source.key] === 'error',
+                'source-empty': sourceHealth[source.key] === 'empty',
+              }"
               :aria-pressed="selectedSources.includes(source.key)"
+              :title="sourceHealthText(source.key)"
               @click="toggleSource(source.key)"
             >
               {{ source.label }}
@@ -157,6 +162,16 @@
             >
               <span class="toggle-dot" aria-hidden="true"></span>
               Live focus M5+
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
+              :class="{ active: locateEnabled }"
+              :aria-pressed="locateEnabled"
+              @click="toggleLocate"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              Wave times for me
             </button>
             <button
               type="button"
@@ -252,11 +267,26 @@
         >
           <span class="mag-badge" :style="{ background: magColor(eq.mag) }">{{ formatMag(eq.mag) }}</span>
           <span class="event-info">
-            <span class="event-place">{{ eq.place || 'Unknown location' }}</span>
+            <span class="event-place">
+              {{ eq.place || 'Unknown location' }}
+              <span v-if="eq.tsunami" class="event-flag" :class="{ danger: eq.tsunami !== 'None' }">
+                Tsunami {{ eq.tsunami }}
+              </span>
+            </span>
             <span class="event-meta">
-              <span>{{ eq.source }}</span>
+            <span class="event-source" :class="{ multi: sourceCount(eq.source) > 1 }">
+              {{ eq.source }}
+              <span
+                v-if="sourceCount(eq.source) > 1"
+                class="confirm-badge"
+                title="Confirmed by multiple independent catalogs"
+              >
+                ✓{{ sourceCount(eq.source) }}
+              </span>
+            </span>
               <span>{{ eq.depth?.toFixed(0) || '?' }}km</span>
-              <span v-if="eq.mmi != null" class="event-mmi" :style="{ color: mmiColor(eq.mmi) }">MMI {{ romanMmi(eq.mmi) }}</span>
+              <span v-if="eq.intensityLabel" class="event-mmi" :style="{ color: mmiColor(eq.mmi) }">{{ eq.intensityLabel }}</span>
+              <span v-else-if="eq.mmi != null" class="event-mmi" :style="{ color: mmiColor(eq.mmi) }">MMI {{ romanMmi(eq.mmi) }}</span>
               <span>{{ timeAgo(eq.time) }}</span>
             </span>
           </span>
@@ -294,7 +324,28 @@
         </div>
         <div class="detail-item">
           <span class="detail-label">Source</span>
-          <span class="detail-value">{{ selectedEvent.source }}</span>
+          <span class="detail-value">
+            {{ selectedEvent.source }}
+            <span v-if="sourceCount(selectedEvent.source) > 1" class="confirm-badge inline">
+              ✓ cross-checked by {{ sourceCount(selectedEvent.source) }} catalogs
+            </span>
+          </span>
+        </div>
+        <div v-if="selectedEvent.felt" class="detail-item">
+          <span class="detail-label">Felt reports</span>
+          <span class="detail-value">{{ selectedEvent.felt }}</span>
+        </div>
+        <div v-if="selectedEvent.cdi" class="detail-item">
+          <span class="detail-label">Community intensity</span>
+          <span class="detail-value" :style="{ color: mmiColor(Math.min(selectedEvent.cdi, 10)) }">
+            MMI {{ romanMmi(Math.min(selectedEvent.cdi, 10)) }}
+          </span>
+        </div>
+        <div v-if="selectedEvent.intensityLabel" class="detail-item">
+          <span class="detail-label">JMA intensity</span>
+          <span class="detail-value" :style="{ color: mmiColor(selectedEvent.mmi) }">
+            {{ selectedEvent.intensityLabel }}
+          </span>
         </div>
         <div v-if="selectedEvent.detail || selectedEvent.url" class="detail-action-row">
           <button type="button" class="detail-action" @click="loadShakeMap(selectedEvent)">
@@ -304,7 +355,7 @@
         </div>
         <div v-if="selectedEvent.tsunami" class="detail-item">
           <span class="detail-label">Tsunami</span>
-          <span class="detail-value danger">Alert</span>
+          <span class="detail-value danger">{{ selectedEvent.tsunami }}</span>
         </div>
       </div>
     </section>
@@ -354,6 +405,92 @@
       <button class="broadcast-close icon-btn" type="button" aria-label="Close live focus" @click="clearLiveFocus">x</button>
     </section>
 
+    <section
+      v-if="eew"
+      class="eew-panel"
+      :class="{ cancelled: eew.cancelled, shifted: !sidebarCollapsed && !isMobile }"
+      aria-live="polite"
+    >
+      <div class="eew-head">
+        <span class="eew-pulse" aria-hidden="true"></span>
+        <span class="eew-title">Japan Earthquake Early Warning</span>
+        <span v-if="eew.cancelled" class="eew-cancelled">Cancelled</span>
+        <button class="icon-btn eew-close" type="button" aria-label="Dismiss early warning" @click="eew = null">x</button>
+      </div>
+
+      <div class="eew-main">
+        <div class="eew-intensity">
+          <span class="eew-intensity-label">Max shaking</span>
+          <span class="eew-intensity-value" :style="{ background: mmiColor(eew.maxMmi) }">
+            {{ eew.maxMmi > 0 ? (eew.areas[0]?.intensityLabel || `MMI ${romanMmi(eew.maxMmi)}`) : '—' }}
+          </span>
+        </div>
+        <div class="eew-meta">
+          <span v-if="eew.place">{{ eew.place }}</span>
+          <span>{{ eew.depth?.toFixed(0) || '?' }}km deep</span>
+          <span>{{ eew.areas.length }} area{{ eew.areas.length === 1 ? '' : 's' }} reported</span>
+        </div>
+      </div>
+
+      <ul v-if="eew.areas.length" class="eew-areas">
+        <li v-for="area in eew.areas.slice(0, 6)" :key="area.name" class="eew-area">
+          <span class="eew-area-name">{{ area.name }}</span>
+          <span class="eew-area-scale" :style="{ color: mmiColor(area.mmi) }">
+            {{ area.intensityLabel }}
+          </span>
+        </li>
+      </ul>
+
+      <p class="eew-notice">
+        Live information relayed by P2PQuake, not a certified earthquake early-warning service.
+      </p>
+    </section>
+
+    <section
+      v-if="waveStatus"
+      class="wave-panel"
+      :class="{ unavailable: waveStatus.status === 'unavailable' }"
+      aria-live="polite"
+    >
+      <template v-if="waveStatus.status === 'unavailable'">
+        <div class="wave-head">
+          <span class="wave-title">Wave times unavailable</span>
+        </div>
+        <div class="wave-note">{{ waveStatus.note }}</div>
+      </template>
+      <template v-else>
+        <div class="wave-head">
+          <span class="wave-title">Wave times for you</span>
+          <span class="wave-distance">{{ waveStatus.distanceKm.toFixed(0) }} km away</span>
+        </div>
+        <div class="wave-note">{{ waveStatus.note }}</div>
+        <div class="wave-bars">
+          <div class="wave-bar">
+            <span class="wave-bar-label">P wave</span>
+            <span class="wave-track">
+              <span
+                class="wave-fill wave-p"
+                :style="{ width: Math.min(100, (waveStatus.elapsedSec / waveStatus.pSec) * 100) + '%' }"
+              ></span>
+            </span>
+          </div>
+          <div class="wave-bar">
+            <span class="wave-bar-label">S wave</span>
+            <span class="wave-track">
+              <span
+                class="wave-fill wave-s"
+                :style="{ width: Math.min(100, (waveStatus.elapsedSec / waveStatus.sSec) * 100) + '%' }"
+              ></span>
+            </span>
+          </div>
+        </div>
+        <p class="eew-notice">
+          Estimated with uniform wave speeds. Accuracy depends on your location permission and
+          the quake's age — this is not an early-warning service.
+        </p>
+      </template>
+    </section>
+
     <section class="legend-panel" :class="{ open: legendOpen, mobile: isMobile }">
       <button
         v-if="isMobile"
@@ -386,8 +523,9 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import {
   fetchEMSC,
   fetchGFZ,
@@ -395,7 +533,9 @@ import {
   fetchUSGS,
   depthColor,
   formatMag,
+  jmaScaleToIntensity,
   normalizeEvent,
+  P2P_QUAKE_MSG,
   P2PQUAKE_WS,
   timeAgo,
 } from './utils/api.js'
@@ -457,6 +597,23 @@ const sidebarCollapsed = ref(true)
 const mobileSidebarOpen = ref(false)
 const legendOpen = ref(false)
 const isMobile = ref(false)
+// Japan earthquake early-warning bulletin (P2PQuake code 556). This is live
+// information, not a certified EEW service — see the notice in the panel.
+const eew = ref(null)
+const eewHistory = ref([])
+// Per-source health so a dead source is visible instead of silently showing
+// zero events while still being listed as active.
+const sourceHealth = ref({ usgs: 'idle', emsc: 'idle', gfz: 'idle', geonet: 'idle', jma: 'idle' })
+// Per-source timestamp of the last successful fetch, used to detect a source
+// that has gone stale (no data for several poll cycles) rather than only one
+// that threw an exception.
+const sourceLastOk = ref({ usgs: 0, emsc: 0, gfz: 0, geonet: 0 })
+// Optional geolocation, used only to turn the raw P/S wave speeds into an
+// arrival countdown for the user. Off by default — nothing is requested until
+// the user opts in.
+const locateEnabled = ref(false)
+const userLocation = ref(null)
+const waveStatus = ref(null)
 const p2pConnected = ref(false)
 const shakeMap = ref({
   open: false,
@@ -495,6 +652,58 @@ let replayTimer = null
 let liveFocusTimer = null
 const feedCache = new Map()
 
+// --- Settings persistence ---
+// Previously every control reset on reload: window, magnitude filter, alert
+// toggles, sidebar state, timezone — 20+ values lost on refresh.
+const SETTINGS_KEY = 'global-quake:settings:v1'
+const persistedRefs = {
+  currentFeed,
+  selectedSources,
+  magFilter,
+  showDepthRings,
+  audioAlertsEnabled,
+  liveFocusEnabled,
+  timeMode,
+  sidebarCollapsed,
+  legendOpen,
+}
+
+function loadSettings() {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY)
+    if (!raw) return
+    const saved = JSON.parse(raw)
+    for (const key of Object.keys(persistedRefs)) {
+      if (saved[key] !== undefined) persistedRefs[key].value = saved[key]
+    }
+  } catch {
+    // Corrupt or unavailable storage: start from defaults.
+  }
+}
+
+let settingsSaveTimer = null
+function saveSettings() {
+  if (settingsSaveTimer) clearTimeout(settingsSaveTimer)
+  settingsSaveTimer = setTimeout(() => {
+    try {
+      const payload = {}
+      for (const key of Object.keys(persistedRefs)) payload[key] = persistedRefs[key].value
+      window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload))
+    } catch {
+      // Storage quota or privacy mode: settings just won't survive reload.
+    }
+  }, 150)
+}
+for (const key of Object.keys(persistedRefs)) {
+  watch(persistedRefs[key], saveSettings)
+}
+
+// Recompute the P/S wave arrival estimate whenever the selected event changes
+// or the user's own location changes.
+watch([selectedEvent, userLocation], ([eq]) => {
+  waveStatus.value = locateEnabled.value ? computeWaveStatus(eq) : null
+}, { immediate: false })
+
 const FEED_CACHE_MS = 55_000
 const CATALOG_POLL_MS = 60_000
 const ALERT_EVENT_MAX_AGE_MS = 15 * 60 * 1000
@@ -503,6 +712,10 @@ const NEW_MARKER_MS = 30_000
 const STRONG_MOTION_POLL_MS = 4_000
 const KMONI_IMAGE_TIMEOUT_MS = 3_500
 const KMONI_BASE = 'https://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/jma_s'
+// A source that stops delivering for this long is marked stale, not merely
+// "not checked yet". Roughly 3x the catalog poll interval.
+const STALE_SOURCE_MS = 3 * 60 * 1000
+const LOCATE_TIMEOUT_MS = 8_000
 const P_WAVE_KM_PER_SEC = 6.0
 const S_WAVE_KM_PER_SEC = 3.5
 
@@ -1319,8 +1532,173 @@ function clearSeismicWavefronts() {
 }
 
 function convertJmaScale(scale) {
-  if (scale == null || scale < 0) return null
-  return Math.max(1, Math.min(10, Math.ceil(scale / 10)))
+  return jmaScaleToIntensity(scale).mmi
+}
+
+function jmaIntensityLabel(scale) {
+  return jmaScaleToIntensity(scale).label
+}
+
+/**
+ * Handle a P2PQuake code-556 early-warning bulletin.
+ *
+ * Structure (verified against the live history API):
+ *   { cancelled, earthquake: { hypocenter, originTime, arrivalTime },
+ *     areas: [{ name, pref, scaleFrom, scaleTo, arrivalTime, kindCode }] }
+ *
+ * 551 only reports one whole-country maxScale; 556 is the one that carries a
+ * per-prefecture intensity + wave-arrival table. This is live information,
+ * not a certified EEW service.
+ */
+function handleEewBulletin(msg) {
+  const eq = msg.earthquake || {}
+  const hypocenter = eq.hypocenter || {}
+  const areas = (msg.areas || []).map(area => {
+    const maxScale = Math.max(Number(area.scaleFrom) || 0, Number(area.scaleTo) || 0)
+    return {
+      name: area.name || area.pref || 'Unknown area',
+      pref: area.pref || null,
+      scaleFrom: area.scaleFrom,
+      scaleTo: area.scaleTo,
+      mmi: convertJmaScale(maxScale),
+      intensityLabel: jmaIntensityLabel(maxScale),
+      arrivalTime: area.arrivalTime || null,
+    }
+  })
+    .filter(area => Number.isFinite(area.mmi) && area.mmi > 1)
+    .sort((a, b) => b.mmi - a.mmi)
+
+  const maxMmi = areas[0]?.mmi ?? 0
+  const now = Date.now()
+
+  eew.value = {
+    id: `eew-${msg.id || eq.originTime || now}`,
+    lat: hypocenter.latitude,
+    lng: hypocenter.longitude,
+    depth: hypocenter.depth,
+    place: hypocenter.name || hypocenter.reduceName || 'Japan',
+    originTime: eq.originTime || msg.time || null,
+    arrivalTime: eq.arrivalTime || null,
+    cancelled: msg.cancelled === true,
+    issuedAt: now,
+    maxMmi,
+    areas,
+  }
+  eewHistory.value = [eew.value, ...eewHistory.value].slice(0, 12)
+
+  sourceHealth.value.jma = 'live'
+  lastUpdate.value = new Date().toLocaleTimeString()
+
+  // Only push an audible/visual alert for shake worth seeing.
+  if (!msg.cancelled && maxMmi >= 3) {
+    const pseudo = {
+      id: eew.value.id,
+      mag: maxMmi >= 6 ? 5.5 : 4.5,
+      time: now,
+      place: eew.value.place,
+      source: 'JMA EEW',
+      mmi: maxMmi,
+    }
+    playFreshEventAudio([pseudo])
+    sendFreshEventNotification([pseudo])
+  }
+}
+
+function sourceCount(sourceLabel) {
+  return String(sourceLabel || '').split(' + ').filter(Boolean).length
+}
+
+function sourceHealthText(key) {
+  const label = (sourceOptions.find(item => item.key === key) || {}).label || key
+  const state = sourceHealth.value[key]
+  if (state === 'error') return `${label}: last request failed`
+  if (state === 'stale') return `${label}: no data for over 3 minutes`
+  if (state === 'empty') return `${label}: no events in this window`
+  if (state === 'ok') return `${label}: delivering events`
+  if (key === 'jma') return 'JMA live: waiting for WebSocket events'
+  return `${label}: not checked yet`
+}
+
+/**
+ * Great-circle distance in km. Used to turn a P/S wave speed into an arrival
+ * time for the user's own location.
+ */
+function greatCircleKm(lat1, lng1, lat2, lng2) {
+  if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return NaN
+  const R = 6371
+  const toRad = deg => (deg * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
+}
+
+async function toggleLocate() {
+  if (locateEnabled.value) {
+    locateEnabled.value = false
+    userLocation.value = null
+    waveStatus.value = null
+    return
+  }
+  if (!('geolocation' in navigator)) {
+    waveStatus.value = { status: 'unavailable', note: 'Geolocation is not available in this browser.' }
+    return
+  }
+  try {
+    const pos = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        timeout: LOCATE_TIMEOUT_MS,
+        maximumAge: 300_000,
+      })
+    })
+    userLocation.value = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }
+    locateEnabled.value = true
+  } catch (err) {
+    locateEnabled.value = false
+    userLocation.value = null
+    waveStatus.value = {
+      status: 'unavailable',
+      note: `Location permission was denied or timed out (${err?.message || err.code || 'unknown'}).`,
+    }
+  }
+}
+
+/**
+ * P/S wave arrival status for a given event.
+ *
+ * Wave speeds are uniform approximations (P 6 km/s, S 3.5 km/s) that ignore
+ * crustal structure, so this is presented as an estimate. kanameishi
+ * interpolates JMA/JB travel-time tables by depth instead; shipping those
+ * tables isn't justified for a global map.
+ */
+function computeWaveStatus(eq) {
+  if (!eq || !userLocation.value) return null
+  if (!Number.isFinite(eq.time) || eq.time > Date.now() + 60_000) return null
+  const distanceKm = greatCircleKm(userLocation.value.lat, userLocation.value.lng, eq.lat, eq.lng)
+  if (!Number.isFinite(distanceKm)) return null
+
+  const elapsedSec = Math.max(0, (Date.now() - eq.time) / 1000)
+  const pSec = distanceKm / P_WAVE_KM_PER_SEC
+  const sSec = distanceKm / S_WAVE_KM_PER_SEC
+  const pReached = elapsedSec >= pSec
+  const sReached = elapsedSec >= sSec
+
+  let note
+  if (elapsedSec < pSec) note = `P wave arriving in ${Math.ceil(pSec - elapsedSec)}s`
+  else if (elapsedSec < sSec) note = `P wave passed; S wave in ${Math.ceil(sSec - elapsedSec)}s`
+  else note = `Both waves passed ~${Math.floor((elapsedSec - sSec) / 60)}m ago`
+
+  return {
+    status: sReached ? 'passed' : pReached ? 's-wave' : 'p-wave',
+    note,
+    pSec,
+    sSec,
+    distanceKm,
+    pReached,
+    sReached,
+    elapsedSec,
+  }
 }
 
 function isAlertableNewEvent(eq, now = Date.now()) {
@@ -1442,46 +1820,74 @@ async function fetchCatalogEvents(feed, sourceKeys = selectedSources.value) {
   const cached = feedCache.get(cacheKey)
   if (cached && Date.now() - cached.time < FEED_CACHE_MS) return cached.events
 
+  // Track each source individually so a source that fails (or returns an
+  // empty table) is visible in the UI instead of silently reporting zero
+  // events while still being listed as active.
+  const health = { usgs: 'idle', emsc: 'idle', gfz: 'idle', geonet: 'idle' }
   const tasks = []
-  if (sourceSet.has('usgs')) {
-    tasks.push(fetchUSGS(feed)
-      .then(data => (data.features || []).map(feature => normalizeEvent(feature, 'usgs')))
+  const addTask = (key, promise) => {
+    tasks.push(promise
+      .then(items => {
+        health[key] = items.length > 0 ? 'ok' : 'empty'
+        return items
+      })
       .catch(err => {
-        console.warn('USGS source failed:', err)
-        return []
-      }))
-  }
-  if (sourceSet.has('emsc')) {
-    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
-    tasks.push(fetchEMSC({ start, minmag: fdsnMinMag(feed), limit: sourceLimit(feed) })
-      .then(features => (features || []).map(feature => normalizeEvent(feature, 'emsc')))
-      .catch(err => {
-        console.warn('EMSC source failed:', err)
-        return []
-      }))
-  }
-  if (sourceSet.has('gfz')) {
-    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
-    tasks.push(fetchGFZ({ start, minmag: fdsnMinMag(feed), limit: sourceLimit(feed) })
-      .then(features => (features || []).map(feature => normalizeEvent(feature, 'gfz')))
-      .catch(err => {
-        console.warn('GFZ source failed:', err)
-        return []
-      }))
-  }
-  if (sourceSet.has('geonet')) {
-    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
-    tasks.push(fetchGeoNet({ start, limit: feed === 'all_week' ? 350 : 180 })
-      .then(features => (features || []).map(feature => normalizeEvent(feature, 'geonet')))
-      .catch(err => {
-        console.warn('GeoNet source failed:', err)
+        health[key] = 'error'
+        console.warn(`${key.toUpperCase()} source failed:`, err)
         return []
       }))
   }
 
+  if (sourceSet.has('usgs')) {
+    addTask('usgs', fetchUSGS(feed)
+      .then(data => (data.features || []).map(feature => normalizeEvent(feature, 'usgs'))))
+  }
+  if (sourceSet.has('emsc')) {
+    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
+    addTask('emsc', fetchEMSC({ start, minmag: fdsnMinMag(feed), limit: sourceLimit(feed) })
+      .then(features => (features || []).map(feature => normalizeEvent(feature, 'emsc'))))
+  }
+  if (sourceSet.has('gfz')) {
+    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
+    addTask('gfz', fetchGFZ({ start, minmag: fdsnMinMag(feed), limit: sourceLimit(feed) })
+      .then(features => (features || []).map(feature => normalizeEvent(feature, 'gfz'))))
+  }
+  if (sourceSet.has('geonet')) {
+    const start = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
+    addTask('geonet', fetchGeoNet({ start, limit: feed === 'all_week' ? 350 : 180 })
+      .then(features => (features || []).map(feature => normalizeEvent(feature, 'geonet'))))
+  }
+
   const merged = dedupeEvents((await Promise.all(tasks)).flat())
   feedCache.set(cacheKey, { time: Date.now(), events: merged })
+  sourceHealth.value = { ...sourceHealth.value, ...health }
+  const okNow = Date.now()
+  const lastOk = { ...sourceLastOk.value }
+  for (const key of Object.keys(health)) {
+    if (health[key] === 'ok') lastOk[key] = okNow
+  }
+  sourceLastOk.value = lastOk
+  markStaleSources()
   return merged
+}
+
+/**
+ * Promote a source from 'ok' to 'stale' when it has not delivered data for
+ * STALE_SOURCE_MS. This catches a source that silently stops answering
+ * (DNS failure, rate limit, upstream outage) — a plain success/failure flag
+ * would keep reporting 'ok' forever after the last successful poll.
+ */
+function markStaleSources() {
+  const now = Date.now()
+  let changed = false
+  const next = { ...sourceHealth.value }
+  for (const key of Object.keys(sourceLastOk.value)) {
+    if (next[key] === 'ok' && sourceLastOk.value[key] && now - sourceLastOk.value[key] > STALE_SOURCE_MS) {
+      next[key] = 'stale'
+      changed = true
+    }
+  }
+  if (changed) sourceHealth.value = next
 }
 
 function hoursForFeed(feed) {
@@ -1537,12 +1943,18 @@ function connectP2PQuake() {
     p2pSocket.onmessage = (message) => {
       try {
         const msg = JSON.parse(message.data)
-        if (msg.code !== 551 || !msg.earthquake || !selectedSources.value.includes('jma')) return
+        if (!selectedSources.value.includes('jma')) return
+        if (msg.code === P2P_QUAKE_MSG.EARLY_WARNING) {
+          handleEewBulletin(msg)
+          return
+        }
+        if (msg.code !== P2P_QUAKE_MSG.EARTHQUAKE || !msg.earthquake) return
         const eq = msg.earthquake
         const hypocenter = eq.hypocenter || {}
         const id = `p2p-${msg.id || eq.id || eq.time || Date.now()}`
         if (knownIds.has(id)) return
         knownIds.add(id)
+        const scale = eq.maxScale ?? null
         const event = {
           id,
           lat: hypocenter.latitude,
@@ -1552,8 +1964,15 @@ function connectP2PQuake() {
           place: hypocenter.name || 'Japan region',
           time: eq.time ? new Date(eq.time).getTime() : Date.now(),
           source: 'JMA',
-          mmi: convertJmaScale(eq.maxScale),
-          tsunami: eq.domesticTsunami && eq.domesticTsunami !== 'None' ? 1 : 0,
+          mmi: convertJmaScale(scale),
+          // JMA intensity grade (弱/やや強い/…) — 551 carries only one
+          // scalar, so this is the whole-country max, not a map.
+          intensityLabel: jmaIntensityLabel(scale),
+          // JMA tsunami flags are literal strings: 'None', 'Unknown', 'Issued',
+          // 'Advisory', 'Warning'.
+          tsunami: (eq.domesticTsunami && eq.domesticTsunami !== 'None' && eq.domesticTsunami !== 'Unknown')
+            ? eq.domesticTsunami : 0,
+          foreignTsunami: eq.foreignTsunami || null,
         }
         if (event.lat == null || event.lng == null) return
         events.value.unshift(event)
@@ -1642,6 +2061,7 @@ function triggerDemoMajorAlert() {
 }
 
 onMounted(() => {
+  loadSettings()
   checkMobile()
   initMap()
   loadData()
@@ -2003,6 +2423,19 @@ onBeforeUnmount(() => {
   border-color: rgba(77,166,255,0.35);
   background: rgba(77,166,255,0.13);
 }
+/* Source health: a source that is broken but still listed used to be
+   indistinguishable from one that simply had no events in the window. */
+.source-toggle.source-error {
+  color: #ff9d9d;
+  border-color: rgba(255,90,90,0.45);
+  background: rgba(255,60,60,0.12);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255,120,120,0.7);
+}
+.source-toggle.source-empty {
+  color: #ffcf87;
+  border-color: rgba(255,180,60,0.35);
+}
 .layer-toggle {
   width: 100%;
   min-height: 32px;
@@ -2022,6 +2455,233 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+/* --- Japan EEW panel (P2PQuake code 556) --- */
+.eew-panel {
+  position: absolute;
+  top: 46px;
+  right: 10px;
+  z-index: 1002;
+  width: min(320px, calc(100vw - 20px));
+  max-height: min(46vh, 340px);
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255,140,40,0.45);
+  background: rgba(28,18,10,0.96);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  padding: 10px 12px 11px;
+  animation: alertSlideIn 0.3s ease;
+}
+.eew-panel.shifted { left: 320px; right: 10px; }
+.eew-panel.cancelled {
+  border-color: rgba(150,150,160,0.35);
+  background: rgba(24,24,30,0.94);
+}
+.eew-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.eew-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff8a2b;
+  flex: 0 0 auto;
+  animation: eewPulse 1.1s ease-out infinite;
+}
+.eew-panel.cancelled .eew-pulse {
+  background: #7a7a86;
+  animation: none;
+}
+.eew-title {
+  color: #ffd9b0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex: 1 1 auto;
+}
+.eew-cancelled {
+  color: #a9a9b4;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.09);
+}
+.eew-close {
+  margin-left: auto;
+}
+.eew-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.eew-intensity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.eew-intensity-label {
+  color: #a88;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.eew-intensity-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  background: #444;
+}
+.eew-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #b9a99a;
+  font-size: 11px;
+  min-width: 0;
+}
+.eew-areas {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-top: 7px;
+}
+.eew-area {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+.eew-area-name {
+  color: #d5cfc6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eew-area-scale {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: 10.5px;
+}
+.eew-notice {
+  margin: 0;
+  color: #8b857d;
+  font-size: 9.5px;
+  line-height: 1.45;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  padding-top: 6px;
+}
+@keyframes eewPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255,138,43,0.55); }
+  70% { box-shadow: 0 0 0 9px rgba(255,138,43,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,138,43,0); }
+}
+
+/* --- P/S wave arrival panel ---
+   Turns the app's existing uniform wave speeds (P 6 km/s, S 3.5 km/s) into
+   a per-user arrival estimate, gated on explicit location consent. */
+.wave-panel {
+  position: absolute;
+  top: 84px;
+  left: 10px;
+  z-index: 1001;
+  width: min(264px, calc(100vw - 20px));
+  border-radius: 10px;
+  border: 1px solid rgba(110,220,255,0.35);
+  background: rgba(14,22,30,0.95);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  padding: 10px 12px 11px;
+  animation: alertSlideIn 0.3s ease;
+}
+.wave-panel.shifted { left: 330px; }
+.wave-panel.unavailable {
+  border-color: rgba(255,140,90,0.35);
+  background: rgba(28,20,14,0.94);
+}
+.wave-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.wave-title {
+  color: #9ce2ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.wave-distance {
+  color: #8fa3b5;
+  font-size: 10.5px;
+  font-weight: 650;
+  flex: 0 0 auto;
+}
+.wave-note {
+  color: #d7e4ee;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 9px;
+}
+.wave-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.wave-bar {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.wave-bar-label {
+  color: #8fa3b5;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.wave-track {
+  display: block;
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.09);
+  overflow: hidden;
+}
+.wave-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s linear;
+}
+.wave-p {
+  background: linear-gradient(90deg, #4aa8d8, #6edcff);
+  box-shadow: 0 0 8px rgba(110,220,255,0.5);
+}
+.wave-s {
+  background: linear-gradient(90deg, #d8662e, #ff8a2b);
+  box-shadow: 0 0 8px rgba(255,138,43,0.5);
 }
 .layer-toggle.active .layer-status {
   color: #8fe7ff;
@@ -2178,12 +2838,61 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 .event-place {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   font-weight: 500;
+}
+/* Cross-verification badge: dedupeEvents already merges a single physical
+   earthquake reported by several independent catalogs into one event with a
+   source label like "USGS + EMSC". Surfacing that count is the signal that
+   matters most for trusting a report. */
+.event-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.event-source.multi {
+  color: #7fd6a0;
+  font-weight: 650;
+}
+.confirm-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 16px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(80,220,140,0.18);
+  color: #7fe0a4;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.confirm-badge.inline {
+  margin-left: 4px;
+  height: 16px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+.event-flag {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(120,180,255,0.16);
+  color: #9cc8ff;
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.event-flag.danger {
+  background: rgba(255,90,90,0.18);
+  color: #ff9d9d;
 }
 .event-meta {
   display: flex;

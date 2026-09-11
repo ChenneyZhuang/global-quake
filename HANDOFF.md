@@ -32,7 +32,7 @@
 
 源清单参考：`https://github.com/YacineBoussoufa/EarthquakeDataCenters`（找非洲/中东/俄罗斯源从这里查，Codex 之前就是按这个补的）
 
-**刷新节奏**：目录轮询 **5 秒**（README 里历史上写"每 1 分钟"是错的，已修）。NIED 面板默认关闭，点开才拉。
+**刷新节奏**：目录轮询 **60 秒**（`CATALOG_POLL_MS`，feed 缓存 55 秒），P2PQuake JMA WebSocket 是实时流。NIED 面板默认关闭，点开才拉。
 
 ## 3. 已经踩过的坑（别再踩）
 
@@ -45,6 +45,41 @@
 | 未知深度当 0km 浅源 | 未知深度不能套红色浅源颜色 |
 | NIED 图片线上加载失败 | `http` 改 `https`，否则 HTTPS 页面 mixed content 被拦 |
 | 8443 端口 server_name 冲突 | `quakenow.conf` 和 `webdav-ssl.conf` 都声明了 `chenneyyu.duckdns.org` on 8443 → nginx 一直告警 `conflicting server name ... ignored`。**已修**：quakenow 只保留 8445 |
+| GFZ 源返回 0 条数据 | GFZ FDSNWS **不支持** `format=json/geojson`（HTTP 400 "invalid value in parameter: format"），只有 `format=text`。已改 `fetchGFZ()` 请求 text 并用 `parseGfzText()` 解析 pipe 表格（实测 24h 14 条，0 畸形）。旧代码静默失败，顶栏却一直显示 GFZ 在贡献数据 |
+| EMSC `format=geojson` 也是 400 | EMSC 只接受 `format=json`（返回 GeoJSON FeatureCollection），别改 |
+| EMSC/GFZ 事件没有详情链接 | 两家都没有可读的 per-event 网页（`/event/{id}` 全 404）。已用 FDSN `eventid=` 查询端点合成 "Source page" 链接 |
+| JMA 震度被压平 | 旧 `convertJmaScale` 是 `ceil(scale/10)`，把 25/30/35 全变 3。已换 `api.js` 的 `jmaScaleToIntensity()` 完整 11 级表（弱/やや強い/かなり強い/激しく…） |
+| P2PQuake 556（EEW）被丢弃 | 旧代码 `if (msg.code !== 551) return`。556 是带各县震度 + 到达时间的预警公告，已接 `handleEewBulletin()` + EEW 面板 |
+| kmoni.bosai.go.jp 连不上 | 实测 TCP 443 超时（日本服务器，海外网络大概率连不上）。面板会优雅降级，别以为是代码坏了 |
+
+## 3.5 2026-09-11 功能轮（全部已实测）
+
+这轮加了什么（按用户"全都弄了"指令）：
+
+| 功能 | 实现 |
+|---|---|
+| **GFZ 源救活** | `api.js`: `gfzTextUrl()` + `parseGfzText()`，`fetchGFZ()` 读 text；GFZ/GFZ 分支的 `normalizeEvent` 保持兼容 |
+| **源健康状态** | `sourceHealth` ref：`ok/empty/error/stale`，`sourceLastOk` 记录成功时间，3 分钟无数据自动 `stale`（`markStaleSources()`）。UI 在 Sources 按钮上：红=error（划线）、黄=empty，hover 有 title 提示 |
+| **多源交叉验证徽章** | `dedupeEvents` 已把同震源合并成 `"USGS + EMSC"` 标签。`sourceCount()` 数 `+`，≥2 时列表和详情面板显示绿色 ✓N 徽章 |
+| **日本 EEW 面板** | P2PQuake code 556：`handleEewBulletin()` 解析 `areas[]`（各县 scaleFrom/scaleTo→震度标签），`.eew-panel` 显示最大震度 + 分县表 + cancelled 状态 + "not certified" 声明 |
+| **JMA 震度分级** | `jmaScaleToIntensity()` 11 级表；551 事件带 `intensityLabel`；列表/详情显示英文标签 |
+| **P/S 波到达估算** | "Wave times for me" 开关（需用户授权定位）。`greatCircleKm()` + `computeWaveStatus()`，`.wave-panel` 显示距离 + P/S 双进度条 + 文案（"P wave arriving in Ns" / "Both waves passed"）。**uniform 波速是估算**，kanameishi 用 JMA/JB 走时表按深度插值——我们没有表，注释里写明了 |
+| **设置持久化** | `localStorage` `global-quake:settings:v1`，watch 防抖 150ms 存 9 个关键 ref（feed/sources/magFilter/depthRings/audio/liveFocus/timeMode/sidebar/legend） |
+| **Leaflet 本地 bundle** | `import 'leaflet/dist/leaflet.css'` 进 App.vue，index.html 删掉 unpkg CDN link。unpkg 挂了不再白屏 |
+
+**验证记录**：
+- `npm run build` 通过（dist JS 266KB / CSS 39KB，17 modules）
+- `verify_waves.mjs`（已删）：从 App.vue 源码提取 `greatCircleKm`/`computeWaveStatus` 真函数体跑 22 个断言，**22/22 过**（4 组 haversine 已知距离、NaN guard、近/远震 P/S 状态、边界 null/future）
+- GFZ：`node` 直接调 `fetchGFZ` 真端点，24h 返回 14 条 0 畸形
+- Chrome headless 截图（1440x900）+ ffmpeg 像素采样：全部 6 档震级 marker 颜色渲染 ✓、徽章绿 #7fe0a4 ✓、活动源 #77bdff ✓、CARTO 暗色底图 0% 亮像素 ✓
+- wave-panel `top:84px`（alert-bar 在 top:46 left:42，会叠）；strong-motion-panel 在右侧不冲突
+
+**没做的**（用户睡觉前授权"按你的理解"）：
+- A2 NIED 换源：没找到可靠替代端点，不敢乱换
+- kanameishi 的 `drawReachBar` SVG 环形进度条：我们用横向双进度条代替，视觉更简单
+- kanameishi 的告警三级分级（CSIS/震级/距离）+ 音高节奏组合：现有 M5+ 单一告警没动，改动面太大
+- 子代理提的 3 个创新功能（90 天趋势线 / 历史同日 / 震级差异条）：没做，候选在 delegate 记录里
+
 
 ## 4. 部署状态 ⚠️ 当前线上是坏的
 

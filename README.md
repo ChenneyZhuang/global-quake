@@ -32,12 +32,18 @@ The project is inspired by earthquake monitoring tools such as kanameishi, JQuak
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Multi-source earthquake catalog | Implemented | USGS, EMSC, GFZ, GeoNet, P2PQuake/JMA |
-| World map | Implemented | Leaflet + CARTO dark basemap |
+| Source health indicators | Implemented | Per-source ok / empty / error / stale status; stale after 3 min with no data |
+| Cross-catalog confirmation | Implemented | Events reported by 2+ independent catalogs show a confirmation badge |
+| World map | Implemented | Leaflet + CARTO dark basemap, bundled locally (no CDN dependency) |
 | Infinite horizontal panning | Implemented | Wrapped marker copies around world boundaries |
 | Magnitude markers | Implemented | Marker fill color and size prioritize magnitude |
 | Depth rings | Implemented | Optional map layer, disabled by default |
 | Japan sensor monitor | Basic | Optional NIED strong-motion image panel, disabled by default |
 | Live focus mode | Implemented | Auto-fly and broadcast lower-third for genuinely new M5.0+ events |
+| Japan EEW panel | Basic/live-info only | P2PQuake code 556 per-prefecture intensity table; not a certified EEW service |
+| P/S wave arrival estimate | Implemented | Optional, requires location permission; uniform wave speeds |
+| JMA intensity grades | Implemented | Full 11-step JMA scale labels, not collapsed to single integers |
+| Settings persistence | Implemented | Key controls survive reload via localStorage |
 | M5+ audio alerts | Implemented | Browser AudioContext, user-enabled |
 | Local notifications | Implemented | Uses browser Notification API while app is open |
 | Timezone-aware timestamps | Implemented | Local/UTC toggle |
@@ -45,7 +51,6 @@ The project is inspired by earthquake monitoring tools such as kanameishi, JQuak
 | Historical replay | Implemented | Timeline slider and play/pause controls |
 | PWA offline shell | Implemented | Caches app shell and static assets |
 | USGS ShakeMap panel | Basic | Loads ShakeMap intensity image when USGS publishes one |
-| Japan EEW integration | Basic/live-info only | P2PQuake/JMA event stream; not a certified EEW service |
 | Web Push API | Not yet | Needs a push subscription server |
 | 3D globe | Not yet | Deferred until 2D UX is stable |
 | Tauri packaging | Not yet | Deferred until web app stabilizes |
@@ -127,12 +132,20 @@ This is not a formal Earthquake Early Warning service. The app does not promise 
 | --- | --- | --- | --- |
 | USGS | Global | GeoJSON feed | Main global catalog, source links, ShakeMap detail where available |
 | EMSC | Global, Europe/Mediterranean strong | FDSN JSON | Independent catalog confirmation |
-| GFZ/GEOFON | Global | FDSN GeoJSON | Independent global seismic catalog |
+| GFZ/GEOFON | Global | FDSN text (pipe-delimited) | Independent global seismic catalog |
 | GeoNet | New Zealand | REST GeoJSON | New Zealand regional catalog |
-| P2PQuake/JMA | Japan | WebSocket | Near-real-time Japan events |
+| P2PQuake/JMA | Japan | WebSocket | Near-real-time Japan events (551) and early-warning bulletins (556) |
 | NIED strong-motion monitor | Japan | Public image endpoint | Optional visual sensor monitor panel |
 
 All data sources are public and do not require an API key. Fair-use behavior matters, so the app polls catalog sources on a conservative cadence.
+
+> **Data-source gotchas (verified 2026-09-10):** GFZ's FDSNWS rejects
+> `format=json`/`format=geojson` (HTTP 400) — only `format=text` works, which is
+> what the app requests and parses. EMSC also rejects `format=geojson` but
+> accepts `format=json`. NIED's kmoni.bosai.go.jp endpoint was unreachable from
+> our test network, so the Japan sensor panel degrades gracefully. P2PQuake
+> carries many message codes — the app consumes 551 (quake) and 556
+> (early-warning); other codes (554/555/561 status frames) are ignored.
 
 ## Tech Stack
 
