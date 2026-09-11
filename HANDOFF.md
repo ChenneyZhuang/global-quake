@@ -81,52 +81,48 @@
 - 子代理提的 3 个创新功能（90 天趋势线 / 历史同日 / 震级差异条）：没做，候选在 delegate 记录里
 
 
-## 4. 部署状态 ⚠️ 当前线上是坏的
+## 4. 部署状态 ✅ 已恢复（2026-09-11）
 
-**线上地址**：`https://quakenow.duckdns.org:8445/`
+**线上地址**：`https://quakenow.duckdns.org:8445/` — 实测 HTTP 200，TLS ~9ms，serve 的是最新构建。
 
-**当前状态（2026-09-10 21:08）**：HTTP **502**，站点不可用。
+**历史故障链（都修了）**：
+1. 502 —— 旧配置反代到临时 `vite preview`，进程一停就 502
+2. 500 —— macOS TCC 拦 root nginx 读 `/Volumes/SSD`（`Operation not permitted`），dist 已移到系统盘
+3. 公网超时 —— DuckDNS 只更新 `chenneyyu`，`quakenow` 一直指着过期 IP（2026-08-19 起公网就打不开，只有内网能访问所以没发现）
 
-### 根因
+### 故障 1 的原始证据（留档）
 旧 `quakenow.conf` 把 `/` 反代到 `127.0.0.1:8081` —— 那是 Codex **临时**跑的 `vite preview`。进程一停（它本来就该停），nginx 就 502。error.log 里清一色：
 ```
 kevent() reported that connect() failed (61: Connection refused) while connecting to upstream,
 client: ..., server: quakenow.duckdns.org, upstream: "http://127.0.0.1:8081/"
 ```
-nginx 本身是好的、TLS 是好的、DuckDNS 是好的（当前公网 IP `115.130.203.99`，和日志一致）。**只有 upstream 不在了。**
 
-纯静态 SPA 根本不该走反代。
-
-### 已做的修复（配置已写入，**等 reload 生效**）
-`/opt/homebrew/etc/nginx/servers/quakenow.conf` 已改写为直接 serve 静态文件：
+### 最终 nginx 配置
+`/opt/homebrew/etc/nginx/servers/quakenow.conf`：
 
 ```nginx
 listen 8445 ssl;                    # 只保留 8445，不再抢 8443
 server_name quakenow.duckdns.org;
-root /Volumes/SSD/global-quake/dist;
+root /opt/homebrew/var/www/global-quake;
 location / { try_files $uri $uri/ /index.html; }
 ```
 另加了：`/assets/` 缓存 30 天 immutable；`service-worker.js` 与 `manifest.webmanifest` 强制 no-cache（否则 PWA 更新到不了用户）；nosniff / referrer-policy。
 
-### 你需要跑的这一条命令
-nginx master (PID 268) 是 root，Homebrew launchd 起的，我这边 sudo 要密码。请手动跑：
+> ⚠️ **root 不能直接指 `/Volumes/SSD`**（2026-09-11 实测）：macOS TCC 会拦 root nginx 对外置/独立卷的 open()，报 `Operation not permitted`（crit 级，文件权限 644 也没用）。所以 dist 要 rsync 到系统盘 `/opt/homebrew/var/www/global-quake/` 再 serve。
 
+**部署流程**（以后更新站点就这两条）：
 ```bash
-nginx -s reload
+cd /Volumes/SSD/global-quake && npm run build
+rsync -a --delete dist/ /opt/homebrew/var/www/global-quake/
 ```
+不需要 reload —— nginx 每次请求都直接读文件，rsync 完即生效。
 
-然后验证（全绿就完事）：
-
-```bash
-curl -sk -o /dev/null -w "%{http_code}\n" https://127.0.0.1:8445/                 # 期望 200
-curl -sk -o /dev/null -w "%{http_code}\n" https://quakenow.duckdns.org:8445/       # 期望 200
-tail -5 /opt/homebrew/var/log/nginx/error.log                                     # 不该再有 8081
-```
+> ⚠️ **DNS 这层也踩过雷**（2026-09-11 发现）：`quakenow.duckdns.org` 曾长期指向过期 IP —— launchd 的 DuckDNS 任务只更新 `chenneyyu`。已改为 `domains=chenneyyu,quakenow` 双域名更新，IP 变了两个域名都会跟上。排查口诀：**本机回环 200 但公网超时 → 先 `dig` 对比 DNS IP 和本机公网 IP**。
 
 ### 顺带说明（不用动）
-- `9443/pool/` 也是 502，因为 `127.0.0.1:5174` 的 Pool Scout 开发服务器没在跑。那是另一条线的事，**别在这修**。
+- `9443/pool/` 的 502 是 `127.0.0.1:5174` 的 Pool Scout 开发服务器没在跑。那是另一条线的事，**别在这修**。
 - `webdav-ssl.conf` (9443 → docker 8082) 正常，302 OK。
-- DuckDNS 每 5 分钟自动更新（`~/Library/LaunchAgents/com.duckdns.update.plist`），域名 `chenneyyu`，域名 `quakenow` 是挂在 `chenneyyu` 的 letsencrypt 证书下的（`/Users/chenney/letsencrypt/config/live/chenneyyu.duckdns.org/`）。
+- DuckDNS 每 5 分钟自动更新（`~/Library/LaunchAgents/com.duckdns.update.plist`），**现在同时更新 `chenneyyu,quakenow` 两个域名**。`quakenow` 的证书挂在 `chenneyyu` 的 letsencrypt 下（`/Users/chenney/letsencrypt/config/live/chenneyyu.duckdns.org/`）。
 
 ## 5. GitHub 状态
 
