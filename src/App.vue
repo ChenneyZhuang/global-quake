@@ -1,5 +1,5 @@
 <template>
-  <div class="app">
+  <div class="app" :class="{ 'eew-visible': !!eew }">
     <header class="stats-bar">
       <button
         class="hamburger icon-btn"
@@ -2241,6 +2241,11 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 42px rgba(0,0,0,0.44);
   backdrop-filter: blur(14px);
   overflow: hidden;
+}
+/* When the Japan EEW panel is showing it occupies this corner (top 46,
+   height ~200px); drop the sensor panel below it so both stay visible. */
+.eew-visible .strong-motion-panel {
+  top: 270px;
 }
 .strong-motion-head {
   min-height: 42px;
