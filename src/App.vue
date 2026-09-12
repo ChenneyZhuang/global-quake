@@ -2247,6 +2247,30 @@ onBeforeUnmount(() => {
 .eew-visible .strong-motion-panel {
   top: 270px;
 }
+/* Small screens: fit the overlay panels inside the viewport, above the
+   safe-area inset, so none of them overflow or collide with browser chrome. */
+@media (max-width: 767px) {
+  .eew-panel {
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-height: 40vh;
+  }
+  .wave-panel {
+    width: auto;
+    left: 10px;
+    right: 10px;
+  }
+  .strong-motion-panel {
+    right: 10px;
+    left: 10px;
+    width: auto;
+  }
+  .eew-visible .strong-motion-panel {
+    top: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
+  }
+}
 .strong-motion-head {
   min-height: 42px;
   display: flex;
