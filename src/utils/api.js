@@ -178,16 +178,51 @@ export function jmaScaleToIntensity(scale) {
 
 // --- Data fetcher ---
 
+// USGS sends `Last-Modified` and answers 304 with an empty body when we echo it
+// back. Verified: all_week is 1.5 MB, but a conditional request costs 0 bytes.
+// We keep the last value per URL so repeat polls of an unchanged feed are free.
+const lastModifiedByUrl = new Map()
+
 /**
- * Fetch USGS GeoJSON feed.
+ * Conditionally fetch a JSON resource.
+ *
+ * @param {string} url
+ * @returns {Promise<{ data: any|null, notModified: boolean }>} `data` is null
+ *   when the server answered 304 and the caller should reuse its own copy.
+ */
+export async function fetchJsonConditional(url) {
+  const headers = {}
+  const previous = lastModifiedByUrl.get(url)
+  if (previous) headers['If-Modified-Since'] = previous
+
+  const res = await fetch(url, { headers })
+  if (res.status === 304) return { data: null, notModified: true }
+  if (!res.ok) throw new Error(`${res.status}`)
+
+  const stamp = res.headers.get('Last-Modified')
+  if (stamp) lastModifiedByUrl.set(url, stamp)
+  return { data: await res.json(), notModified: false }
+}
+
+/**
+ * Fetch USGS GeoJSON feed. Uses a conditional request so an unchanged feed
+ * costs a 304 instead of re-downloading up to 1.5 MB (all_week).
  * @param {string} feed - One of USGS_FEEDS keys or a raw URL
+ * @param {Object} [opts]
+ * @param {Object} [opts.cached] - Previously fetched FeatureCollection to reuse on 304
  * @returns {Promise<Object>} GeoJSON FeatureCollection
  */
-export async function fetchUSGS(feed = 'all_day') {
+export async function fetchUSGS(feed = 'all_day', opts = {}) {
   const url = USGS_FEEDS[feed] || feed
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`USGS ${res.status}`)
-  return res.json()
+  const { data, notModified } = await fetchJsonConditional(url)
+  if (notModified) {
+    if (opts.cached) return opts.cached
+    // No cached copy to fall back on: force a full fetch.
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`USGS ${res.status}`)
+    return res.json()
+  }
+  return data
 }
 
 /**
