@@ -135,6 +135,16 @@
             <button
               type="button"
               class="layer-toggle"
+              :class="{ active: showTectonicPlates }"
+              :aria-pressed="showTectonicPlates"
+              @click="toggleTectonicPlates"
+            >
+              <span class="toggle-dot" aria-hidden="true"></span>
+              Plate boundaries
+            </button>
+            <button
+              type="button"
+              class="layer-toggle"
               :class="{ active: showStrongMotionLayer }"
               :aria-pressed="showStrongMotionLayer"
               @click="toggleStrongMotionLayer"
@@ -616,6 +626,7 @@ const lastUpdate = ref('-')
 const connected = ref(false)
 const loadingData = ref(false)
 const showDepthRings = ref(false)
+const showTectonicPlates = ref(true)
 const showStrongMotionLayer = ref(false)
 const strongMotionStatus = ref('idle')
 const strongMotionTimestamp = ref('')
@@ -714,6 +725,7 @@ const persistedRefs = {
   selectedSources,
   magFilter,
   showDepthRings,
+  showTectonicPlates,
   audioAlertsEnabled,
   liveFocusEnabled,
   timeMode,
@@ -1010,6 +1022,41 @@ function markerNeutralStroke(mag) {
 function toggleDepthRings() {
   showDepthRings.value = !showDepthRings.value
   nextTick().then(renderMarkers)
+}
+
+// --- Tectonic plate boundaries overlay ---
+// PB2002 boundaries (Bird, 2003) via fraxen/tectonicplates. One ~220 KB
+// fetch, cached in the service worker like any other static asset. Plate
+// margins explain most global seismicity, so this single layer makes the
+// worldwide epicentre distribution readable at a glance.
+let plateLayer = null
+
+async function loadTectonicPlates() {
+  if (!map) return
+  try {
+    const res = await fetchWithTimeout('/data/tectonic-plates.json', { timeoutMs: 30_000 })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const geo = await res.json()
+    plateLayer = L.geoJSON(geo, {
+      style: {
+        color: '#e0703a',
+        weight: 1.2,
+        opacity: 0.55,
+        interactive: false,
+      },
+      pane: 'overlayPane',
+    })
+    if (showTectonicPlates.value) plateLayer.addTo(map)
+  } catch (err) {
+    console.warn('Tectonic plate overlay unavailable:', err.message)
+  }
+}
+
+function toggleTectonicPlates() {
+  showTectonicPlates.value = !showTectonicPlates.value
+  if (!map || !plateLayer) return
+  if (showTectonicPlates.value) plateLayer.addTo(map)
+  else map.removeLayer(plateLayer)
 }
 
 function toggleStrongMotionLayer() {
@@ -2036,6 +2083,7 @@ onMounted(() => {
   loadSettings()
   checkMobile()
   initMap()
+  loadTectonicPlates()
   loadData()
   connectP2PQuake()
   if (showStrongMotionLayer.value) startStrongMotionMonitor()
@@ -2062,6 +2110,7 @@ onBeforeUnmount(() => {
     p2pSocket.close()
   }
   stopStrongMotionMonitor()
+  if (plateLayer && map) map.removeLayer(plateLayer)
   if (audioContext) audioContext.close()
   if (liveFocusTimer) clearTimeout(liveFocusTimer)
   clearEpicenterEffect()

@@ -103,7 +103,31 @@
 
 **新增工具**：`cua-driver` MCP 已装进 project profile（`hermes mcp add cua-driver`，56 工具 enabled）——**需新会话生效**。之前只能用 headless Chrome + 截图像素分析代替。
 
-## 3.7 2026-09-12 工程化轮（测试/lint/CI + 超时与重试）
+## 3.8 2026-09-12 视觉验证 + 移动端修复 + 板块边界层
+
+### 排版审查(从生产 CSS 提取全部浮动面板坐标做几何分析)
+| 发现 | 处理 |
+|---|---|
+| EEW 面板与 NIED 传感器面板完全重叠(同占右上角) | 已修:.eew-visible 时传感器面板下移 |
+| 移动端:EEW/wave/sensor 三面板用桌面几何,390px 屏会溢出 | 已修:767px 断点下自适应宽度 |
+| EEW 时传感器固定 top:270px 压小屏 | 已修:改为锚定底部安全区 |
+| wave-panel(top 84)与 alert-bar(top 46)不重叠 | 上一轮已修对 |
+
+### 视觉验证方法(诚实记录)
+- 桌面 1440x900 + 移动 390x844 截图,ffmpeg 逐像素采样:7 档 marker 颜色、徽章、load-more 全部通过
+- 视觉大模型(vision_analyze)持续 500 不可用;tesseract OCR 对深色主题不出字;cua-driver get_browser_state 要求用户在场点 profile 授权弹窗(browser_consent_required)—— 下次用户在场时跑 cua-driver permissions grant 可解锁
+- 踩坑:验证用本地服务器(8090)被我清理后,手机截图全是 ERR_CONNECTION_REFUSED 空白,差点误判为 app bug。教训:排查"空白截图"先确认服务器活着
+
+### 新功能:板块边界叠加层(参考对比 top1)
+- 数据:fraxen/tectonicplates PB2002_boundaries.json(Bird 2003),241 条 LineString,221KB,已存 public/data/tectonic-plates.json,SW 壳缓存
+- UI:侧栏 Map layers 加 "Plate boundaries" 开关(默认开),#e0703a 55% 透明细线
+- 持久化:showTectonicPlates 已入 localStorage
+- 源验证:gzip 传输 54KB;USGS moment-tensor(nodal-plane strike/dip/rake)验证可画沙滩球(M6+ 才有,未做);P2PQuake 552 津波报 code 存在但近期静默(结构未验证,未做)
+
+### 功能对比结论(参考 Zero-Quake/TREM-Lite/USGS,子代理调研)
+top5 候选:(1)板块边界(本轮已做) (2)烈度区域着色+等震线(ShakeMap contour 叠地图) (3)海啸面板(552+tsunami.gov) (4)震源机制沙滩球 (5)用户自定义告警(homePin+震级/距离阈值)。(2)(3)(4)(5)未做。
+
+## 3.7 2026-09-12 工程化轮(测试/lint/CI + 超时与重试)
 
 ### 核心问题：零工程化设施
 前三轮我写了 5 个一次性验证脚本（verify_gfz / verify_waves / verify_cond / verify_window / verify_dedupe），**用完就删** —— 同一个断言重写了 5 遍，什么也没留下。项目本身也**没有测试、没有 lint、没有 CI**。

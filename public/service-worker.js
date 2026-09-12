@@ -9,6 +9,7 @@ const APP_SHELL = [
   '/icons/icon-512.png',
   '/icons/icon-192.svg',
   '/icons/icon-512.svg',
+  '/data/tectonic-plates.json',
 ]
 
 self.addEventListener('install', (event) => {
