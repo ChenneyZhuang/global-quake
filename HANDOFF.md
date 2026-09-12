@@ -80,6 +80,29 @@
 - kanameishi 的告警三级分级（CSIS/震级/距离）+ 音高节奏组合：现有 M5+ 单一告警没动，改动面太大
 - 子代理提的 3 个创新功能（90 天趋势线 / 历史同日 / 震级差异条）：没做，候选在 delegate 记录里
 
+## 3.6 2026-09-12 性能与正确性轮（全部实测）
+
+| 问题 | 证据 / 修法 |
+|---|---|
+| **缓存永远失效** | `FEED_CACHE_MS=55s` < `CATALOG_POLL_MS=60s` → 每次轮询都 miss，每分钟重下整个 feed。改 90s |
+| **USGS 支持 304** | 实测 `If-Modified-Since` → HTTP 304 / 0 字节。加 `fetchJsonConditional()` + `rawUsgsCache`，all_week 全量 984ms → 304 路径 163ms |
+| **后台标签页永久轮询** | 没有 `visibilitychange` 处理。加了：隐藏时 clearInterval，回来立即刷新并恢复节奏 |
+| **antimeridian 去重 bug** | `Math.abs(179.9 - (-179.9)) = 359.8°`，斐济/克马德克/汤加一带（换日线，极活跃）跨源永远不合并。加 `lngDelta()` 最短角距 → 179.9/-179.9 正确合并为 `"EMSC + USGS"` |
+| **去重 O(n²)** | 实测 2,836 条 → 400 万次比较 / 24.6ms，每 60 秒一次。换空间网格（cell = 匹配半径）：9.2ms，**2.7x**，且输出与旧实现逐条一致（0 差异） |
+| **knownIds 无限增长** | 长开标签页累积所有见过的 id。加 20,000 上限 + 最旧优先淘汰 |
+| **列表静默丢 70%** | 硬编码 `slice(0, 650)`，all_week 有 ~2,240 条。改分页（每页 200）+ 剩余计数 + 折叠 |
+| **4 个 feed 定义了没用** | 接进 UI：`M4.5+ past 7 days` = **57KB vs all_week 1,556KB（小 27 倍）**，实测 83 条全 M4.5+。其他源的 minmag 也跟着窗口对齐（否则 M2 数据混进 M4.5+ 窗口） |
+| **PWA 图标只有 SVG** | iOS 忽略 SVG 主屏图标。生成 PNG 180/192/512 + 正规 maskable（安全区留白），SW 壳同步更新 |
+
+**验证记录**：
+- 去重等价性：真实 2,836 条，grid vs naive **0 条差异**
+- `4.5_week` 实测 83 条全部 ≥ M4.5；EMSC/GFZ 也用 minmag 4.5
+- 条件请求：`node` 直调 `fetchUSGS('all_week')` 两次，第二次 163ms 且复用同一数组
+- 部署后线上截图 + ffmpeg 像素采样：6 档 marker、交叉验证徽章、**load-more 按钮 #8fc4ff 98px**、深色底图 0% 亮像素
+- 线上 200，新图标 4 个全 200
+
+**新增工具**：`cua-driver` MCP 已装进 project profile（`hermes mcp add cua-driver`，56 工具 enabled）——**需新会话生效**。之前只能用 headless Chrome + 截图像素分析代替。
+
 
 ## 4. 部署状态 ✅ 已恢复（2026-09-11）
 
