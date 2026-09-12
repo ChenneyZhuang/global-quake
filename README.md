@@ -194,6 +194,43 @@ npm run preview
 
 The app is a static SPA. Anything that can serve the `dist/` folder can host it.
 
+### Checks
+
+```bash
+npm run lint          # eslint (vue + js, flat config)
+npm test              # unit tests for src/utils/geo.js — no network needed
+npm run test:network  # live data-source smoke tests (hits real endpoints)
+```
+
+`npm test` covers the pure helpers: colour scales, intensity mapping, HTML
+escaping, haversine distance, the antimeridian case, and de-duplication
+(including an equivalence check against a naive reference implementation).
+
+`npm run test:network` is separate on purpose: it depends on third-party
+services, so it is not part of the default test run. It exists to catch the
+failure mode this project hit twice — a catalogue that silently returns
+nothing while the UI keeps listing it as active.
+
+CI (`.github/workflows/ci.yml`) runs lint + unit tests + build on every push.
+The live-source suite runs on a daily schedule rather than per push, so a
+third-party outage never shows up as a red build.
+
+### Project layout
+
+```text
+src/
+├── App.vue             # component: template, view state, Leaflet wiring
+└── utils/
+    ├── api.js          # data sources: URLs, fetchers, normalisation
+    └── geo.js          # pure helpers: colours, geometry, de-duplication
+tests/
+├── geo.test.mjs        # unit tests (npm test)
+└── network.test.mjs    # live endpoint smoke tests (npm run test:network)
+```
+
+Pure logic belongs in `src/utils/geo.js` rather than in the component, so it
+can be tested without mounting Vue.
+
 ## Deployment
 
 Build the project:

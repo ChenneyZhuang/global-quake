@@ -178,6 +178,36 @@ export function jmaScaleToIntensity(scale) {
 
 // --- Data fetcher ---
 
+// Reference catalogs occasionally accept a connection and then never answer.
+// Without a timeout the request never settles, `loadingData` stays true and the
+// status bar is stuck on "Loading" indefinitely (verified: a black-hole server
+// kept a bare fetch pending past 40 s). Every request gets a hard deadline.
+const REQUEST_TIMEOUT_MS = 20_000
+
+/**
+ * fetch() with a hard timeout.
+ *
+ * Uses AbortSignal.timeout when available (Chrome 103+, Safari 16+, FF 100+)
+ * and falls back to an AbortController + setTimeout for older engines.
+ *
+ * @param {string} url
+ * @param {Object} [options] - usual fetch init; `timeoutMs` overrides the default
+ * @returns {Promise<Response>}
+ */
+export async function fetchWithTimeout(url, options = {}) {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...init } = options
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // USGS sends `Last-Modified` and answers 304 with an empty body when we echo it
 // back. Verified: all_week is 1.5 MB, but a conditional request costs 0 bytes.
 // We keep the last value per URL so repeat polls of an unchanged feed are free.
@@ -190,18 +220,51 @@ const lastModifiedByUrl = new Map()
  * @returns {Promise<{ data: any|null, notModified: boolean }>} `data` is null
  *   when the server answered 304 and the caller should reuse its own copy.
  */
-export async function fetchJsonConditional(url) {
+export async function fetchJsonConditional(url, options = {}) {
   const headers = {}
   const previous = lastModifiedByUrl.get(url)
   if (previous) headers['If-Modified-Since'] = previous
 
-  const res = await fetch(url, { headers })
+  const res = await fetchWithTimeout(url, { ...options, headers })
   if (res.status === 304) return { data: null, notModified: true }
   if (!res.ok) throw new Error(`${res.status}`)
 
   const stamp = res.headers.get('Last-Modified')
   if (stamp) lastModifiedByUrl.set(url, stamp)
   return { data: await res.json(), notModified: false }
+}
+
+/**
+ * Retry a fetcher with exponential backoff and jitter.
+ *
+ * A transient 5xx/network blip previously dropped a whole source for a full
+ * poll cycle. Retries are deliberately few and slow: these are public
+ * fair-use endpoints, so hammering them on failure is worse than showing a
+ * temporarily empty source.
+ *
+ * @param {() => Promise<any>} fn
+ * @param {Object} [opts]
+ * @param {number} [opts.attempts=3]
+ * @param {number} [opts.baseDelayMs=800]
+ * @returns {Promise<any>}
+ */
+export async function withRetry(fn, opts = {}) {
+  const attempts = opts.attempts ?? 3
+  const baseDelayMs = opts.baseDelayMs ?? 800
+  let lastError
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+      if (attempt === attempts - 1) break
+      // Backoff, plus up to 40% jitter so several failing sources don't
+      // retry in lockstep.
+      const delay = baseDelayMs * 2 ** attempt * (1 + Math.random() * 0.4)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+  throw lastError
 }
 
 /**
@@ -218,7 +281,7 @@ export async function fetchUSGS(feed = 'all_day', opts = {}) {
   if (notModified) {
     if (opts.cached) return opts.cached
     // No cached copy to fall back on: force a full fetch.
-    const res = await fetch(url)
+    const res = await fetchWithTimeout(url)
     if (!res.ok) throw new Error(`USGS ${res.status}`)
     return res.json()
   }
@@ -232,7 +295,7 @@ export async function fetchUSGS(feed = 'all_day', opts = {}) {
  */
 export async function fetchEMSC(opts = {}) {
   const url = emscUrl(opts)
-  const res = await fetch(url)
+  const res = await fetchWithTimeout(url)
   if (!res.ok) throw new Error(`EMSC ${res.status}`)
   const data = await res.json()
   const features = data.features || []
@@ -257,7 +320,7 @@ export async function fetchEMSC(opts = {}) {
  */
 export async function fetchGFZ(opts = {}) {
   const url = gfzTextUrl(opts)
-  const res = await fetch(url)
+  const res = await fetchWithTimeout(url)
   if (!res.ok) throw new Error(`GFZ ${res.status}`)
   const text = await res.text()
   if (/^Error\b/.test(text.trim())) {
@@ -269,7 +332,7 @@ export async function fetchGFZ(opts = {}) {
 
 export async function fetchGeoNet(opts = {}) {
   const params = new URLSearchParams({ MMI: '0' })
-  const res = await fetch(`${GEONET_QUAKE}?${params}`)
+  const res = await fetchWithTimeout(`${GEONET_QUAKE}?${params}`)
   if (!res.ok) throw new Error(`GeoNet ${res.status}`)
   const data = await res.json()
   let features = data.features || []
@@ -290,7 +353,7 @@ export async function fetchGeoNet(opts = {}) {
  */
 export async function fetchP2PQuakeHistory(limit = 10) {
   const url = `${P2PQUAKE_HISTORY}?codes=551&limit=${limit}`
-  const res = await fetch(url)
+  const res = await fetchWithTimeout(url)
   if (!res.ok) throw new Error(`P2PQuake ${res.status}`)
   return res.json()
 }

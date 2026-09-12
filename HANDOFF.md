@@ -103,6 +103,28 @@
 
 **新增工具**：`cua-driver` MCP 已装进 project profile（`hermes mcp add cua-driver`，56 工具 enabled）——**需新会话生效**。之前只能用 headless Chrome + 截图像素分析代替。
 
+## 3.7 2026-09-12 工程化轮（测试/lint/CI + 超时与重试）
+
+### 核心问题：零工程化设施
+前三轮我写了 5 个一次性验证脚本（verify_gfz / verify_waves / verify_cond / verify_window / verify_dedupe），**用完就删** —— 同一个断言重写了 5 遍，什么也没留下。项目本身也**没有测试、没有 lint、没有 CI**。
+
+### 已建立
+| 设施 | 内容 |
+|---|---|
+| **`src/utils/geo.js`** | 把埋在 3,782 行组件里的**纯函数抽出来**：magColor/mmiColor/intensityColor/estimatedIntensity/romanMmi/safeText/greatCircleKm/lngDelta/dedupeEvents/isSameEarthquake/mergeSourceLabel/computeWaveStatus。App.vue 减少 ~190 行 |
+| **`tests/geo.test.mjs`** | **30 个断言**，`npm test`，纯离线。含 antimeridian 回归、去重与 naive 实现的**等价性验证**（600 条伪随机数据 + 换日线簇） |
+| **`tests/network.test.mjs`** | **11 个断言**，`npm run test:network`，打真端点。把前几轮踩的坑固化成回归测试：GFZ `format=geojson` 必须被拒、P2PQuake magnitude 在 `hypocenter.magnitude`、304 条件请求必须可用 |
+| **eslint 9 flat config** | `npm run lint` → 0 错误 0 警告 |
+| **GitHub Actions CI** | push/PR 跑 lint + test + build；真端点测试走**每日定时**（第三方故障不该让 CI 变红） |
+
+### 另一个真 bug：所有 fetch 都没有超时
+实测：对一个「接受 TCP 但永不响应」的黑洞服务器，裸 `fetch` **挂了 40 秒仍未 settle**（Node 进程都没退出）。项目里 6 处 fetch 全无超时 → 一个卡住的源会让 `loadingData` 永远为 true，状态栏永远卡在 "Loading"。
+
+修法：`fetchWithTimeout()`（优先 `AbortSignal.timeout`，回退 AbortController），默认 20s；再给每个源加 `withRetry()`（2 次退避 + 抖动，避免多个源同时重试打同一批公共端点）。
+
+### 测试抓到的一个契约问题
+`lngDelta(0, 180)` 返回 -180，而我 JSDoc 写的是 `(-180, 180]`。行为无害（-180 与 +180 是同一条经线），但文档已改正为 `[-180, 180]` 并注明。**这就是有测试的价值** —— 写的时候不会发现。
+
 
 ## 4. 部署状态 ✅ 已恢复（2026-09-11）
 
