@@ -3650,6 +3650,38 @@ onBeforeUnmount(() => {
     font-size: 11px !important;
     padding: 3px 6px !important;
   }
+
+  /* Touch-target minimums (44px Apple HIG / 48dp Material guidance, relaxed
+     to 36px here to fit the compact drawer): the replay Reset link measured
+     26x11 px and its range input 16px tall — both unusable with a thumb.
+     Padding, not font-size, so the visual design is unchanged. */
+  .mini-link {
+    display: inline-block;
+    min-height: 36px;
+    min-width: 44px;
+    line-height: 36px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+  .replay-slider {
+    height: 28px;
+    margin: -4px 0;
+  }
+  .hamburger {
+    min-width: 38px;
+  }
+
+  /* Leaflet attribution links are 12px tall and legally required. Keep the
+     visual identical but pad the hit area so a thumb can actually land on
+     them (pseudo-element extends the clickable box without moving layout). */
+  .leaflet-control-attribution a {
+    position: relative;
+  }
+  .leaflet-control-attribution a::after {
+    content: '';
+    position: absolute;
+    inset: -12px -8px;
+  }
 }
 
 @media (min-width: 768px) and (max-width: 1024px) {
