@@ -35,6 +35,11 @@
       <span aria-hidden="true">⌂</span>
     </button>
 
+    <div v-if="!connected && !loadingData" class="offline-bar" role="status">
+      <span class="offline-dot" aria-hidden="true"></span>
+      Can't reach the data feeds — retrying automatically. Check your connection.
+    </div>
+
     <div v-if="newAlerts.length" class="alert-bar" :class="{ shifted: !sidebarCollapsed && !isMobile }">
       <span v-for="alert in newAlerts.slice(0, 3)" :key="alert.id" class="alert-item">
         <b :style="{ color: magColor(alert.mag) }">M{{ formatMag(alert.mag) }}</b>
@@ -2275,6 +2280,37 @@ onBeforeUnmount(() => {
   color: #d5dced;
   cursor: pointer;
 }
+.offline-bar {
+  position: absolute;
+  top: 50px;
+  left: 42px;
+  right: 0;
+  z-index: 996;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: rgba(70,20,20,0.92);
+  border-bottom: 1px solid rgba(255,90,90,0.3);
+  color: #ffb0b0;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.offline-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff5a5a;
+  flex: 0 0 auto;
+  animation: offlineBlink 1.4s ease-in-out infinite;
+}
+@keyframes offlineBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+@media (max-width: 767px) {
+  .offline-bar { left: 0; font-size: 11px; padding: 4px 8px; }
+}
 .alert-bar {
   position: absolute;
   top: 46px;
@@ -3049,6 +3085,9 @@ onBeforeUnmount(() => {
   height: 100%;
   z-index: 1;
   touch-action: none;
+  /* Dark gradient placeholder while Esri tiles stream in, so the first
+     paint reads as a map loading rather than a blank void. */
+  background: linear-gradient(160deg, #12182a 0%, #1a2436 55%, #0e1420 100%);
 }
 .detail-panel {
   position: absolute;
@@ -3746,6 +3785,32 @@ onBeforeUnmount(() => {
     position: absolute;
     inset: -12px -8px;
   }
+}
+
+/* Keyboard focus visibility: dark theme hides default outlines, so give
+   every interactive element a clearly visible focus ring on :focus-visible
+   (mouse clicks do not trigger it). */
+:focus-visible {
+  outline: 2px solid #77bdff;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.leaflet-container a:focus-visible {
+  outline-color: #ffcc00;
+}
+
+/* Respect the OS 'reduce motion' setting: drop decorative animation and
+   long eased transitions while keeping the UI fully functional. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .quake-wave-icon { display: none; }
+  .eew-pulse { animation: none; }
 }
 
 @media (min-width: 768px) and (max-width: 1024px) {
