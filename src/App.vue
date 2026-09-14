@@ -81,7 +81,19 @@
         </button>
       </div>
 
-      <div v-if="!sidebarCollapsed || isMobile" class="sidebar-filters">
+      <div v-if="!sidebarCollapsed || isMobile" class="filters-toggle-row">
+        <button
+          type="button"
+          class="filters-toggle"
+          :aria-expanded="filtersOpen"
+          @click="filtersOpen = !filtersOpen"
+        >
+          <span class="filters-toggle-arrow" aria-hidden="true">{{ filtersOpen ? '▾' : '▸' }}</span>
+          Filters
+          <span class="filters-toggle-hint">{{ filtersOpen ? 'hide' : 'show' }}</span>
+        </button>
+      </div>
+      <div v-show="filtersOpen" class="sidebar-filters">
         <div class="filter-field">
           <label class="select-label" for="feed-filter">Catalog window</label>
           <select id="feed-filter" v-model="currentFeed" class="filter-select" @change="switchFeed(currentFeed)">
@@ -639,6 +651,10 @@ const replayEnabled = ref(false)
 const replayPlaying = ref(false)
 const replayProgress = ref(100)
 const sidebarCollapsed = ref(true)
+// The filter panel used to eat 90%+ of the sidebar height (measured: 697px of
+// 711px on desktop), squeezing the event list to a sliver. Collapsible by
+// default, remembered across reloads.
+const filtersOpen = ref(false)
 const mobileSidebarOpen = ref(false)
 const legendOpen = ref(false)
 const isMobile = ref(false)
@@ -730,6 +746,7 @@ const persistedRefs = {
   liveFocusEnabled,
   timeMode,
   sidebarCollapsed,
+  filtersOpen,
   legendOpen,
 }
 
@@ -2850,9 +2867,36 @@ onBeforeUnmount(() => {
 }
 .sidebar-list {
   flex: 1;
+  min-height: 200px;   /* the list is the primary content — never squeeze it away */
   overflow-y: auto;
   padding: 4px;
   -webkit-overflow-scrolling: touch;
+}
+.filters-toggle-row {
+  padding: 0 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.filters-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: #9fb4cf;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.filters-toggle:hover { color: #cdd9ea; }
+.filters-toggle-arrow { font-size: 10px; color: #77bdff; }
+.filters-toggle-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: #6f7d90;
+  font-weight: 500;
 }
 .list-limit-note {
   margin: 4px 4px 8px;
@@ -3484,6 +3528,12 @@ onBeforeUnmount(() => {
   .sidebar-header {
     min-height: 58px;
     padding: 10px 10px 10px 12px;
+  }
+  .filters-toggle { min-height: 42px; }
+  .sidebar-filters {
+    max-height: 52dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .toggle-btn {
     width: 34px;
