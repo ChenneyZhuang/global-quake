@@ -1799,8 +1799,12 @@ async function loadData() {
       merged.push(eq)
     }
 
+    // JMA live events survive feed switches (they are not part of any
+    // catalog), but they must still respect the window's magnitude floor or a
+    // small JMA quake lingers in the M4.5+ window.
     for (const eq of events.value) {
-      if (eq.source === 'JMA' && sourceKeys.includes('jma') && !seen.has(eq.id)) merged.push(eq)
+      if (eq.source === 'JMA' && sourceKeys.includes('jma') && !seen.has(eq.id)
+        && (eq.mag == null || eq.mag >= fdsnMinMag(feed))) merged.push(eq)
     }
 
     events.value = merged
@@ -1876,7 +1880,12 @@ async function fetchCatalogEvents(feed, sourceKeys = selectedSources.value) {
   }
 
   const merged = dedupeEvents((await Promise.all(tasks)).flat())
-  feedCache.set(cacheKey, { time: Date.now(), events: merged })
+  // Client-side magnitude floor: GeoNet's API has no minmagnitude parameter, so
+  // its feed carries every NZ quake (down to ~M0.7) even in the M4.5+ window.
+  // Filter here so every window's label matches its actual contents.
+  const magFloor = fdsnMinMag(feed)
+  const floored = merged.filter(eq => eq.mag == null || eq.mag >= magFloor)
+  feedCache.set(cacheKey, { time: Date.now(), events: floored })
   sourceHealth.value = { ...sourceHealth.value, ...health }
   const okNow = Date.now()
   const lastOk = { ...sourceLastOk.value }
