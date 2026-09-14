@@ -918,9 +918,14 @@ function initMap() {
     zoomDelta: 0.5,
   })
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    subdomains: 'abcd',
+  // Basemap: Esri Dark Gray Canvas — anonymous, no API key, visually close
+  // to CARTO Dark Matter. Switched from CARTO because their basemaps now
+  // require a (free) API key and show an "API key required" watermark on
+  // anonymous raster tiles; the raster endpoint is also being retired.
+  // If you ever want CARTO back: request a free key at carto.com/basemaps/apikey/
+  // and use https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=KEY
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ | &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors',
     maxZoom: 19,
   }).addTo(map)
 

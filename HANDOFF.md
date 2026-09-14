@@ -127,6 +127,13 @@
 ### 功能对比结论(参考 Zero-Quake/TREM-Lite/USGS,子代理调研)
 top5 候选:(1)板块边界(本轮已做) (2)烈度区域着色+等震线(ShakeMap contour 叠地图) (3)海啸面板(552+tsunami.gov) (4)震源机制沙滩球 (5)用户自定义告警(homePin+震级/距离阈值)。(2)(3)(4)(5)未做。
 
+### ⚠️ 底图合规问题(2026-09-14 发现,待用户选方案)
+CARTO basemaps 政策已变:需要免费 API key(5M tiles/月),无 key 会盖 "API key required" 水印;
+raster(PNG)通道已宣布退役。我们的 anonymous URL 暂时还能 200(遗留通道+CDN 缓存),
+但属于违反 ToS 且随时可能失效。备选:A) 申请 CARTO 免费 key(key 会进前端,CARTO 条款允许)
+B) Esri Dark Gray Canvas(实测匿名 200,亮度 42 vs CARTO 35,视觉接近,无需 key)
+C) OSM 标准(浅色,与深色 UI 冲突,不推荐)。**待用户选 A/B 后实施。**
+
 ## 3.7 2026-09-12 工程化轮(测试/lint/CI + 超时与重试)
 
 ### 核心问题：零工程化设施
