@@ -133,6 +133,22 @@ top5 候选:(1)板块边界(本轮已做) (2)烈度区域着色+等震线(ShakeM
 - **index.html no-cache**:换新构建后浏览器不会再拿旧 index 引用已删除的 JS(白屏根源)
 - 优化后:JS 公网拉取 25ms(本地),整页资源传输 ~136KB(原 ~660KB)
 
+### ⚠️ 证书过期事故(2026-09-16 已修复)+ 自动续期
+letsencrypt 证书 9/15 过期导致整站 HTTPS 挂掉(悄悄过期,无告警)。
+**续期方法**(全部无需人工干预,已实测走通):
+```bash
+# certbot 是用户态安装,续期走 dns-duckdns challenge(不需要动 nginx):
+/Users/chenney/Library/Python/3.9/bin/certbot renew \
+  --config-dir /Users/chenney/letsencrypt/config \
+  --work-dir /Users/chenney/letsencrypt/work \
+  --logs-dir /Users/chenney/letsencrypt/logs \
+  --cert-name chenneyyu.duckdns.org --force-renewal --non-interactive
+# 注意: non-interactive 会先随机延迟 ~7 分钟才开始(design),别以为是卡死
+# 续完后 reload nginx 加载新证书(需要管理员,osascript with administrator privileges)
+```
+**建议**:给 certbot renew 挂 launchd 每月跑一次 + reload 挂钩,或至少每 60 天手动跑一次。
+当前新证书有效期至 2026-12-15。nginx master 是 root,证书路径 /Users/chenney/letsencrypt/config/live/chenneyyu.duckdns.org/(chenney 可读)
+
 ### 底图合规问题(2026-09-14 发现,已修复)
 CARTO basemaps 政策已变:需要免费 API key(5M tiles/月),无 key 会盖 "API key required" 水印;raster(PNG)通道已宣布退役。
 **已切换到 Esri Dark Gray Canvas**(用户未及时回复,按"自主判断"授权选了无需 key 的方案):
