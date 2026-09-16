@@ -127,6 +127,12 @@
 ### 功能对比结论(参考 Zero-Quake/TREM-Lite/USGS,子代理调研)
 top5 候选:(1)板块边界(本轮已做) (2)烈度区域着色+等震线(ShakeMap contour 叠地图) (3)海啸面板(552+tsunami.gov) (4)震源机制沙滩球 (5)用户自定义告警(homePin+震级/距离阈值)。(2)(3)(4)(5)未做。
 
+### 性能优化完成(2026-09-14)
+- **nginx gzip 已开启**(nginx.conf 可由 chenney 直接写,reload 通过 osascript 管理员弹窗完成):JS 270KB→**88KB**(3.1x),CSS 42KB→12.5KB,板块 JSON 139KB→36KB
+- **HTTP/2 已启用**(listen 8445 ssl http2):24 个瓦片从 6 个 TCP 连接变 1 条多路复用连接
+- **index.html no-cache**:换新构建后浏览器不会再拿旧 index 引用已删除的 JS(白屏根源)
+- 优化后:JS 公网拉取 25ms(本地),整页资源传输 ~136KB(原 ~660KB)
+
 ### 底图合规问题(2026-09-14 发现,已修复)
 CARTO basemaps 政策已变:需要免费 API key(5M tiles/月),无 key 会盖 "API key required" 水印;raster(PNG)通道已宣布退役。
 **已切换到 Esri Dark Gray Canvas**(用户未及时回复,按"自主判断"授权选了无需 key 的方案):
